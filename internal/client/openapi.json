@@ -1,0 +1,2310 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Scrutari Post-Quantum Gateway — Public REST API",
+    "description": "Programmatic interface for managing routes, tenants, domains, members, and API keys.\n\nAuthentication is via API keys minted from the dashboard or via the admin CLI; pass them as `Authorization: Bearer <key>`.\n\nEvery non-2xx response returns the same `ApiError` envelope (see `components/schemas/ApiError`). List endpoints return a `Page<T>` envelope with `data`, `has_more`, and an optional `next_cursor`.\n\nThis is an alpha-tagged spec. The shape is stable, but new endpoints will land additively as more `/v1/*` surfaces gain `#[utoipa::path]` annotations.",
+    "contact": {
+      "name": "Scrutari API Support",
+      "email": "support@scrutari.ai"
+    },
+    "license": {
+      "name": "Proprietary"
+    },
+    "version": "1.0.0-alpha.2"
+  },
+  "servers": [
+    {
+      "url": "https://api.edge.scrutari.ai",
+      "description": "Production"
+    }
+  ],
+  "paths": {
+    "/v1/api_keys": {
+      "get": {
+        "tags": [
+          "api_keys"
+        ],
+        "summary": "List the caller's API keys. Returns a paginated\n`Page<ApiKeyResponse>` envelope; the response shape is the\n**masked** form — `plaintext` is NEVER included in a list\nresponse, only at the original `POST /v1/api_keys` mint call.",
+        "operationId": "list_api_keys",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from the previous response's `next_cursor`. Omit on the first page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "cur_AbcXYZ123"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (1..=100). Default 20.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of active API keys for the authenticated tenant. Revoked keys are filtered out.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ApiKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `api_keys:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid `limit` or malformed `cursor`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "api_keys:read"
+            ]
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "api_keys"
+        ],
+        "summary": "Mint a new API key. **The plaintext secret is included in the\nresponse and is shown ONLY on this call** — there is no recovery\npath. The dashboard / CLI must display it immediately and let\nthe operator store it before navigating away.",
+        "description": "Subsequent reads of this key via `GET /v1/api_keys` return\n`ApiKeyResponse` (metadata + `key_hint` only, no plaintext).\n\nCommon failure modes:\n\n- **`422 name_invalid`** — name is empty or longer than 100 chars.\n- **`422 scope_invalid`** — at least one scope isn't in the\n  accepted vocabulary. See [`CreateApiKeyRequest::scopes`] for\n  the list, or fetch the dynamic registry at `GET /v1/scopes`\n  (planned) once it lands.\n- **`422 environment_invalid`** — environment is set to something\n  other than `live` or `test`.",
+        "operationId": "create_api_key",
+        "requestBody": {
+          "description": "Key parameters. `tenant_id` is derived from the authenticated caller, not the body.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Key minted. **The `plaintext` field carries the secret and is visible exactly once** — store it before navigating away. Subsequent reads return `ApiKeyResponse` without the plaintext.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedApiKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `api_keys:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failure on `name`, `scopes`, or `environment`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "api_keys:write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/api_keys/{id}": {
+      "delete": {
+        "tags": [
+          "api_keys"
+        ],
+        "summary": "Revoke an API key. The row stays in storage (marked\n`revoked_at`) so auth-failure audit logs still resolve the\n`api_key_id` to a human-readable label — \"delete\" at the API\nlevel is \"revoke\" at the data model.",
+        "description": "Subsequent presentations of the revoked key by an attacker\nreturn `401` from the auth middleware. Lost keys can be safely\nrevoked AND should be: there is no way to recover the\nplaintext, and a revoked key cannot be re-enabled (mint a new\none instead).",
+        "operationId": "revoke_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Key identifier, prefix `ak_` followed by base32-no-pad.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "ak_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeApiKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `api_keys:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No active key with this id for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` doesn't match the `ak_*` format.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "api_keys:write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/domains": {
+      "get": {
+        "tags": [
+          "domains"
+        ],
+        "summary": "List domain verifications for the authenticated tenant. Returns\na paginated `Page<DomainResponse>` envelope.",
+        "description": "The list includes domains in every state — `pending`,\n`verified`, `failed`, `expired` — so a Terraform provider's\n`data \"scrutari_domain\"` can present accurate state. To filter\nto only verified domains, the caller filters client-side\n(a `?status=` query parameter is planned but not yet landed).",
+        "operationId": "list_domains",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from the previous response's `next_cursor`. Omit on the first page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "cur_AbcXYZ123"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (1..=100). Default 20.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of domain verifications for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_DomainResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `domains:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid `limit` or malformed `cursor`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "domains:read"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/domains/{id}": {
+      "get": {
+        "tags": [
+          "domains"
+        ],
+        "summary": "Fetch a single domain verification by id. Returns 404 for\ndomains that don't exist OR exist for a different tenant — same\nanti-disclosure posture as other tenant-scoped reads.",
+        "operationId": "get_domain",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Domain verification identifier from a previous list response.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "example": 17
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested domain verification.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `domains:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No domain verification with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` is not a positive integer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "domains:read"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/members": {
+      "get": {
+        "tags": [
+          "members"
+        ],
+        "summary": "List members of the authenticated tenant. Returns a paginated\n`Page<MemberResponse>` envelope. Deactivated members are\nfiltered out at the data layer; the response contains only\nactive members.",
+        "operationId": "list_members",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from the previous response's `next_cursor`. Omit on the first page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "cur_AbcXYZ123"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (1..=100). Default 20.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of active tenant members.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_MemberResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `members:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid `limit` or malformed `cursor`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "members:read"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/members/{user_id}": {
+      "get": {
+        "tags": [
+          "members"
+        ],
+        "summary": "Fetch a single tenant member by `user_id` (UUID). Returns 404 for\nusers that don't exist in this tenant — same anti-disclosure\nposture as other tenant-scoped reads.",
+        "operationId": "get_member",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Member identifier as a UUID v4 in canonical hyphenated form.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "1f8b3c5a-7d2e-4c89-a013-9b7f60a2e145"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `members:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No member with this user_id exists in the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `user_id` is not a valid UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "members:read"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/routes": {
+      "get": {
+        "tags": [
+          "routes"
+        ],
+        "summary": "List routes for the authenticated tenant. Returns a paginated\n`Page<RouteResponse>` envelope. Pass the response's `next_cursor`\nas the `?cursor=` query parameter to fetch the next page.",
+        "operationId": "list_routes",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from the previous response's `next_cursor`. Omit on the first page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "cur_AbcXYZ123"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (1..=100). Default 20.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of routes for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RouteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `routes:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid `limit` or malformed `cursor`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "routes:read"
+            ]
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "routes"
+        ],
+        "summary": "Create a new route. Returns the newly-created `RouteResponse`\nwith its server-assigned `id`.",
+        "description": "Common failure modes worth noting in client code:\n\n- **`409 route_conflict`** — another route on this host already\n  uses the same `path_prefix`. The conflict is checked globally\n  (across tenants) but the response does not reveal the owning\n  tenant.\n- **`422 plan_limit_reached`** — the tenant's plan caps the\n  number of routes and that cap is hit. Upgrade or delete an\n  existing route first.\n- **`403 domain_not_verified`** — `host` is not a verified\n  domain for this tenant. Verify via the operator-tier\n  `POST /admin/domains` flow first.",
+        "operationId": "create_route",
+        "requestBody": {
+          "description": "Route to create. `tenant_id` is derived from the API key and must NOT be specified in the body.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRouteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Route created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `routes:write` scope, or `host` is not a verified domain for this tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another route already matches `(host, path_prefix)`. PATCH the existing route or DELETE it before recreating.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failure — invalid `auth_mode`, malformed `path_prefix` / `upstream_url`, or plan-cap reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "routes:write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/routes/{id}": {
+      "get": {
+        "tags": [
+          "routes"
+        ],
+        "summary": "Fetch a single route by id. Returns 404 for routes that don't\nexist OR exist for a different tenant — the two cases are\nintentionally indistinguishable to foreclose existence-disclosure.",
+        "operationId": "get_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Route identifier returned from a previous create or list call.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "example": 42
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The requested route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `routes:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No route with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` is not a positive integer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "routes:read"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "routes"
+        ],
+        "summary": "Delete a route. Returns 204 No Content on success.",
+        "description": "The deletion is hard, not soft: the `(host, path_prefix)` slot\nbecomes immediately available for another route. If you need\nto temporarily cut traffic, prefer `PATCH /v1/routes/{id}`\nwith `{\"is_active\": false}` — same effect, reversible without\nre-creation.",
+        "operationId": "delete_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Route identifier.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "example": 42
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Route deleted."
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `routes:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No route with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` is not a positive integer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "routes:write"
+            ]
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "routes"
+        ],
+        "summary": "Partial update — every field in the body is optional; omitted =\nunchanged. `host` and `tenant_id` are intentionally NOT\npatchable: re-homing a route to a new host is delete-then-create.",
+        "description": "Common failure modes:\n\n- **`404 route_not_found`** — id doesn't exist OR exists for a\n  different tenant.\n- **`409 route_conflict`** — the requested `path_prefix` would\n  collide with another route on the same host.",
+        "operationId": "update_route",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Route identifier.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "example": 42
+          }
+        ],
+        "requestBody": {
+          "description": "Partial update. Omit any field you don't want to change.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRouteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated route.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `routes:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No route with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Requested `path_prefix` collides with another route on the same host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failure on a body field or path parameter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "routes:write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/tenants": {
+      "get": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "List tenants accessible to the caller.",
+        "description": "The authenticated API key is scoped to exactly one tenant, so this\nendpoint always returns at most one row — surfaced as a\n`Page<TenantResponse>` envelope (with `has_more: false` and no\ncursor) for client-SDK consistency with the multi-row list\nendpoints. Iterate it like any other list and you'll get the\ncaller's own tenant.",
+        "operationId": "list_tenants",
+        "responses": {
+          "200": {
+            "description": "List of tenants accessible to the caller. Always exactly one row — the tenant the API key is scoped to. Returned as a `Page` envelope (with `has_more: false`, no cursor) for client-SDK consistency with the multi-row list endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_TenantResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key is valid but lacks the `tenants:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error. Includes a `request_id` clients should quote when contacting support.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "tenants:read"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/traces/stream": {
+      "get": {
+        "tags": [
+          "traces"
+        ],
+        "summary": "Subscribe to the per-tenant live trace stream. Long-lived\n`text/event-stream` response delivering one event per request /\nhandshake / data-plane signal observed at the gateway.",
+        "description": "# Wire format\n\nStandard W3C Server-Sent Events. Each event carries:\n\n- **`id:`** — opaque resume cursor (a Redis Stream message ID,\n  e.g. `1715126400123-0`). Clients reconnecting after a network\n  blip should send the last-seen value as the\n  `Last-Event-ID` request header to resume without gaps or\n  replay.\n- **`data:`** — a single-line JSON object describing the event\n  (see the data-shape section below).\n\nEmpty SSE comment frames (`: keepalive`) fire every 15 seconds\nto prevent intermediate proxies (nginx, Azure Front Door, AWS\nALB) from timing out idle connections. Clients should ignore\nthem.\n\n# Connection model\n\nOne connection per dashboard tab is the typical deployment\nshape. The browser's `EventSource` API does automatic reconnect\nwith backoff; custom clients (curl, Go, Python `requests` with\n`stream=True`) should implement equivalent reconnect-with-\n`Last-Event-ID` semantics. A per-tenant connection cap is on the\nroadmap (followup #195) but not enforced today.\n\n# Data shape\n\nEach `data:` line is a JSON object with this minimal common shape:\n\n```json\n{\n  \"at\": \"2026-05-07T13:00:00.123Z\",\n  \"trace_id\": \"01k4r9j7y8x2v3m6q1w5z9b7n2\",\n  \"kind\": { ... }\n}\n```\n\n`kind` is a tagged discriminated union — the `\"type\"` discriminant\nnames the event variant (`request_started`, `request_completed`,\n`handshake_completed`, `bytes_in`, `bytes_out`, etc.) and the\nremaining fields carry the variant-specific payload.\n\n**The schema-typed model of `kind` is intentionally NOT in this\nOpenAPI spec.** The trace event is a complex Rust enum\n(`shared_kernel::tracing::TraceEvent`) that mirrors data-plane\ninternals; encoding its full structure in OpenAPI would couple the\npublic spec to internal representation churn. We document the\ndata shape in prose here; the canonical reference for variant\nnames and payload fields is\n<https://docs.scrutari.ai/v1/traces/event-types> (live with the\ntrace-event guide; deferred to followup #230 if/when we promote\nthe type to a public-facing schema).\n\n# Authentication and tenancy\n\nRequires the `traces:read` scope on the presented API key. The\nstream is tenant-scoped from the authenticated key, NEVER from\nany query parameter — cross-tenant event leakage is structurally\nimpossible at this layer.",
+        "operationId": "stream_traces",
+        "parameters": [
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "Opaque resume cursor from the most recent `id:` field a previous connection received. Send on reconnect to resume the stream from that point without gaps or replay. Omit on the first connection to receive only events arriving AFTER the connection opens (no historical replay).",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "example": "1715126400123-0"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscription opened. Response body is a `text/event-stream` of `id:` + `data:` frames, one per event, plus periodic `: keepalive` comments. The connection stays open indefinitely; close the underlying TCP/TLS connection to unsubscribe. See the endpoint description for the JSON shape of the `data:` field.",
+            "content": {
+              "text/event-stream": {}
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `traces:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error — typically the trace backend (Redis) is unreachable. Retry with backoff; the `EventSource` API does this automatically.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "traces:read"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "description": "The wire shape of an error response. Matches the OpenAPI spec\nexactly. `#[serde(rename = \"error\")]` ensures the JSON body is\n`{ \"error\": { ... } }`, not `{ ... }`, so clients can do\n`response.error.code` cleanly.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorBody"
+          }
+        }
+      },
+      "ApiErrorBody": {
+        "type": "object",
+        "description": "Inner error object — the actual payload clients destructure.",
+        "required": [
+          "type",
+          "code",
+          "message",
+          "request_id"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/ErrorType"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "param": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiKeyResponse": {
+        "type": "object",
+        "description": "Safe-to-read wire shape for an API key. Returned by every\nsurface except the one-shot `POST /v1/api_keys` creation\n(which uses [`IssuedApiKeyResponse`]).\n\nCarries metadata + `key_hint` (last 4 chars for display).\nDoes NOT carry the plaintext or the Argon2id hash; those are\nnot recoverable from a list/read response.",
+        "required": [
+          "id",
+          "tenant_id",
+          "name",
+          "scopes",
+          "environment",
+          "key_hint",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Key identifier. Same as [`IssuedApiKeyResponse::id`].",
+            "example": "ak_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "tenant_id": {
+            "type": "string",
+            "description": "Owning tenant.",
+            "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "name": {
+            "type": "string",
+            "description": "Operator-supplied label.",
+            "example": "terraform-prod"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Granted scopes."
+          },
+          "environment": {
+            "type": "string",
+            "description": "`live` or `test`.",
+            "example": "live"
+          },
+          "key_hint": {
+            "type": "string",
+            "description": "Last 4 characters of the secret body.",
+            "example": "XyZ9"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp of issuance.",
+            "example": "2026-01-15T09:30:00Z"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 / RFC 3339 timestamp of the most recent use.\n`null` for keys that have never been presented to the\nauth middleware. Updated asynchronously (the gateway\nbatches `last_used_at` writes to limit row contention on\nhot keys).",
+            "example": "2026-04-22T14:18:42Z"
+          }
+        }
+      },
+      "CreateApiKeyRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/api_keys`.",
+        "required": [
+          "name",
+          "scopes"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable label for this key. Surfaced in the\ndashboard's API Keys table; useful for distinguishing\nkeys by purpose (\"terraform-prod\", \"ci-runner\",\n\"vendor-X-integration\"). 1-100 characters.",
+            "example": "terraform-prod"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Capability scopes the key grants. Each scope is a\n`<resource>:<action>` pair. Server validates against a\nclosed list; unknown scopes return `422 scope_invalid`.\n\nCurrent valid values: `*` (wildcard, all scopes),\n`api_keys:read`, `api_keys:write`, `routes:read`,\n`routes:write`, `domains:read`, `domains:write`,\n`members:read`, `members:write`, `tenants:read`,\n`tenants:write`, `audit_log:read`, `traces:read`.\n\nThe Terraform provider should query the dynamic\n`GET /v1/scopes` registry (planned) rather than hardcoding\nthis list, so new scopes flow in without a provider\nrelease."
+          },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional environment selector. `live` (default) issues a\nproduction key; `test` issues a sandbox key. Test keys\nroute to a separate environment with no real billing —\nsuitable for CI smoke tests and dev workflows.",
+            "example": "live"
+          }
+        }
+      },
+      "CreateRouteRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/routes`.\n\n`tenant_id` is intentionally NOT a body field — it's derived\nfrom the authenticated API key, not taken from the request, to\nforeclose the \"specify someone else's tenant in the body\" class\nof cross-tenant attack.",
+        "required": [
+          "host",
+          "path_prefix",
+          "upstream_url"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "Host the route matches. Must be a verified domain for the\ncaller's tenant (see `POST /admin/domains` to verify a new\ndomain). Lower-cased on the server before storage; case is\nnot significant on match.",
+            "example": "api.acme.example"
+          },
+          "path_prefix": {
+            "type": "string",
+            "description": "URL path prefix to match. Must start with `/`. The pair\n`(host, path_prefix)` is globally unique across all\ntenants; conflicts return `409 route_conflict` (without\ndisclosing the owning tenant).",
+            "example": "/orders"
+          },
+          "upstream_url": {
+            "type": "string",
+            "description": "Where to forward matched traffic. Must be `http://...` or\n`https://...`. The gateway validates the scheme; the host\nitself is NOT validated at create time (it might not yet\nresolve; that's a deploy-time concern, not a create-time\nconcern).",
+            "example": "https://internal-orders.acme.example"
+          },
+          "strip_path_prefix": {
+            "type": "boolean",
+            "description": "Strip `path_prefix` before forwarding. Default false.",
+            "example": true
+          },
+          "preserve_host_header": {
+            "type": "boolean",
+            "description": "Forward the client's `Host:` header unchanged. Default\nfalse.",
+            "example": false
+          },
+          "auth_mode": {
+            "type": "string",
+            "description": "Authentication mode. One of `required` (default), `optional`,\n`passthrough`. Opening a route to anonymous traffic should\nalways be an explicit choice, hence the safe default.",
+            "example": "required"
+          }
+        }
+      },
+      "DomainResponse": {
+        "type": "object",
+        "description": "Public response shape for a single domain verification.\n\nMirrors the storage row (`repo::DomainVerification`) minus the\n`expected_value` secret — see the module docs for why.",
+        "required": [
+          "id",
+          "tenant_id",
+          "domain",
+          "verification_type",
+          "challenge_host",
+          "status",
+          "attempts",
+          "created_at",
+          "updated_at",
+          "expires_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Auto-assigned verification identifier. Stable for the\nlifetime of the row; not reused after deletion.",
+            "example": 17
+          },
+          "tenant_id": {
+            "type": "string",
+            "description": "Owning tenant. Read-only — derived from the authenticated\ncaller.",
+            "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "domain": {
+            "type": "string",
+            "description": "The customer-supplied domain name being verified. Stored\nas the case-folded form the gateway uses for matching.",
+            "example": "api.acme.example"
+          },
+          "verification_type": {
+            "type": "string",
+            "description": "Verification method. Today: `dns_txt` (TXT record check)\nor `cname` (CNAME chain check). Stored as a string rather\nthan a wire enum so future methods (DNS-01 wildcard,\nHTTP-01 file challenge) can be added without bumping the\nAPI major version.",
+            "example": "dns_txt"
+          },
+          "challenge_host": {
+            "type": "string",
+            "description": "The hostname the gateway queries when running the proof.\nFor `dns_txt` this is typically `_scrutari-verify.<domain>`;\nfor `cname` it's the `<domain>` itself. The dashboard's\nverification UI surfaces this so customers know which\nrecord to inspect when troubleshooting.",
+            "example": "_scrutari-verify.api.acme.example"
+          },
+          "status": {
+            "type": "string",
+            "description": "Current verification state. One of:\n\n  - `pending`  — challenge issued, no successful check yet.\n  - `verified` — the gateway has confirmed control.\n  - `failed`   — exceeded max attempts; reset via\n    `/admin/domains` (the public API can't reset).\n  - `expired`  — past `expires_at`; the row stays for audit\n    but no longer counts as proof of control.",
+            "example": "verified"
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Count of verification attempts the gateway has run for\nthis row. Increments on every `dns_txt`/`cname` lookup.\nUsed by the rate-limiter to back off after repeated\nfailures.",
+            "example": 3
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last DNS-level error encountered, or null if no error.\nSurfaced verbatim to the dashboard so customers can\ndistinguish \"record not found\" (likely TTL not propagated)\nfrom \"record present but wrong value\" (likely copy-paste\nmistake).",
+            "example": "NXDOMAIN"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp of when the verification row\nwas created (= when the challenge was issued).",
+            "example": "2026-01-15T09:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp of the most recent verification\nattempt or state change.",
+            "example": "2026-01-15T09:35:12Z"
+          },
+          "verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 8601 / RFC 3339 timestamp of successful verification, or\nnull if the row has not been verified yet (or has since\nexpired).",
+            "example": "2026-01-15T09:35:12Z"
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp after which this verification\nrow no longer counts as proof of control. The dashboard\nprompts re-verification before this point; expired rows\nremain readable for audit.",
+            "example": "2027-01-15T09:30:00Z"
+          }
+        }
+      },
+      "ErrorType": {
+        "type": "string",
+        "description": "Coarse error categorization. Stable enum: variants will not be\nremoved within a major version. Clients switch on this for retry\nand surfacing logic.\n\nHTTP status code mapping is fixed and exposed via\n[`ErrorType::status_code`] (returns a `u16` to avoid pulling axum\nor http types into the no-default-features dep graph).",
+        "enum": [
+          "validation_error",
+          "authentication_error",
+          "permission_error",
+          "not_found_error",
+          "conflict_error",
+          "rate_limit_error",
+          "api_error",
+          "service_unavailable_error"
+        ]
+      },
+      "IssuedApiKeyResponse": {
+        "type": "object",
+        "description": "`POST /v1/api_keys` response — the ONLY shape in the public\nAPI that carries a plaintext secret. The dashboard or CLI MUST\ndisplay `plaintext` to the user immediately; subsequent reads\nof the same key (via `GET /v1/api_keys`) return\n[`ApiKeyResponse`] without `plaintext`. There is no recovery\npath — lost keys must be revoked and re-issued.\n\nSecurity review notes for anyone touching this type:\n\n  * Adding a new field that contains secret material (e.g. a\n    refresh token, a webhook signing key) is a wire-contract\n    change AND a security-classification change. Both need\n    explicit security-review sign-off.\n  * NEVER add `plaintext` (or any equivalent secret field) to\n    `ApiKeyResponse`. That type is the \"safe to read on every\n    subsequent call\" surface; widening it would defeat the\n    entire mint-once design.",
+        "required": [
+          "id",
+          "tenant_id",
+          "name",
+          "scopes",
+          "environment",
+          "key_hint",
+          "created_at",
+          "plaintext"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Key identifier. Prefix `ak_` followed by base32-no-pad.\nStable across the key's lifetime; survives revocation\n(the row is marked `revoked_at`, not deleted).",
+            "example": "ak_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "tenant_id": {
+            "type": "string",
+            "description": "Owning tenant. Read-only — derived from the authenticated\ncaller, never specified in the request body.",
+            "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "name": {
+            "type": "string",
+            "description": "Operator-supplied label, echoed from the request.",
+            "example": "terraform-prod"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Granted scopes, echoed from the request."
+          },
+          "environment": {
+            "type": "string",
+            "description": "`live` or `test`. Defaults to `live` if the request\nomitted the field.",
+            "example": "live"
+          },
+          "key_hint": {
+            "type": "string",
+            "description": "Last 4 characters of the secret body, for display. Useful\nfor \"the key ending in `XyZ9`\" UI when the customer has\nmany keys.",
+            "example": "XyZ9"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp of issuance.",
+            "example": "2026-01-15T09:30:00Z"
+          },
+          "plaintext": {
+            "type": "string",
+            "description": "**One-time-only plaintext secret.** Format\n`scru_(live|test)_<26-chars>`. The dashboard / CLI MUST\nsurface this once and never store it. Lost keys cannot be\nrecovered — revoke + re-issue.\n\nThis field is on the `IssuedApiKeyResponse` type\nEXCLUSIVELY; the list/read shape\n([`ApiKeyResponse`]) does NOT carry it.",
+            "example": "scru_live_AbcDeFgHiJkLmNoPqRsTuVwXyZ9"
+          }
+        }
+      },
+      "MemberResponse": {
+        "type": "object",
+        "description": "Public response shape for a single tenant member.\n\nReturns the minimum-viable shape any membership-management UI\nneeds: identity, role, contact, timestamps. Does NOT include\ninternal fields like `last_session_at` (operational telemetry,\ndashboard-only) or `password_hash` (irrelevant in the OIDC-only\nauth model; not stored in our table).",
+        "required": [
+          "user_id",
+          "tenant_id",
+          "role",
+          "email",
+          "display_name",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "description": "Stable identifier for the user across tenants. UUID v4\ngenerated at first sign-in (or at invitation accept).\nHyphenated canonical form on the wire.",
+            "example": "1f8b3c5a-7d2e-4c89-a013-9b7f60a2e145"
+          },
+          "tenant_id": {
+            "type": "string",
+            "description": "Owning tenant. Read-only — derived from the authenticated\ncaller.",
+            "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "role": {
+            "type": "string",
+            "description": "Role assignment. Stored as a string rather than a wire\nenum so role names can evolve additively. Current values:\n\n  - `owner`  — full administrative access; can mint\n    billing-impacting changes.\n  - `admin`  — full operational access; no billing-tier\n    decisions.\n  - `member` — read+write on routes/domains; no\n    member-management or billing.\n  - `viewer` — read-only across the tenant.\n\nRole assignment changes through `/admin/members`; this\npublic surface is read-only.",
+            "example": "admin"
+          },
+          "email": {
+            "type": "string",
+            "description": "Email of record for this member. Used by the dashboard's\ninvitation flow, by audit-log row attribution, and by the\npassword-recovery email path (when applicable to the\ntenant's auth mode).\n\nPII — see the module-level docs for handling guidance.",
+            "example": "alice@acme.example"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Human-readable name. Falls back to the email if the\nidentity provider didn't supply a display name at\nsign-in (rare; most IdPs supply one).",
+            "example": "Alice Acme"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp of when this user first\njoined the tenant (invitation accept, JIT provision, or\nfounder-claim).",
+            "example": "2026-01-15T09:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp of the most recent change\nto this row (role change, display-name update, etc.).",
+            "example": "2026-04-22T14:18:42Z"
+          }
+        }
+      },
+      "Page_ApiKeyResponse": {
+        "type": "object",
+        "description": "Generic page response. `T` is the resource type (`TenantResponse`,\n`RouteResponse`, etc.).\n\nUse `Page::new(items, next_cursor)` to construct — the\n`has_more` field is computed from `next_cursor.is_some()` to\nguarantee consistency.\n\n# `ToSchema` derive\n\nThe struct-level bound stays `T: Serialize` (NOT `+ ToSchema`).\nutoipa's `#[derive(ToSchema)]` adds the `ToSchema` bound to its\nown generated impl, matching the way serde adds its own bounds\n— bounds are propagated INTO the impl, not OUT of it onto the\nstruct. Keeping the struct bound minimal means handlers that\nconstruct `Page<X>` for a type that hasn't been\nutoipa-annotated yet still compile; only the `body =\nPage<TenantResponse>` use site in a `#[utoipa::path]`\nannotation triggers the `TenantResponse: ToSchema` requirement.",
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Safe-to-read wire shape for an API key. Returned by every\nsurface except the one-shot `POST /v1/api_keys` creation\n(which uses [`IssuedApiKeyResponse`]).\n\nCarries metadata + `key_hint` (last 4 chars for display).\nDoes NOT carry the plaintext or the Argon2id hash; those are\nnot recoverable from a list/read response.",
+              "required": [
+                "id",
+                "tenant_id",
+                "name",
+                "scopes",
+                "environment",
+                "key_hint",
+                "created_at"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Key identifier. Same as [`IssuedApiKeyResponse::id`].",
+                  "example": "ak_01k4r9j7y8x2v3m6q1w5z9b7n2"
+                },
+                "tenant_id": {
+                  "type": "string",
+                  "description": "Owning tenant.",
+                  "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Operator-supplied label.",
+                  "example": "terraform-prod"
+                },
+                "scopes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Granted scopes."
+                },
+                "environment": {
+                  "type": "string",
+                  "description": "`live` or `test`.",
+                  "example": "live"
+                },
+                "key_hint": {
+                  "type": "string",
+                  "description": "Last 4 characters of the secret body.",
+                  "example": "XyZ9"
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp of issuance.",
+                  "example": "2026-01-15T09:30:00Z"
+                },
+                "last_used_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "ISO 8601 / RFC 3339 timestamp of the most recent use.\n`null` for keys that have never been presented to the\nauth middleware. Updated asynchronously (the gateway\nbatches `last_used_at` writes to limit row contention on\nhot keys).",
+                  "example": "2026-04-22T14:18:42Z"
+                }
+              }
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_DomainResponse": {
+        "type": "object",
+        "description": "Generic page response. `T` is the resource type (`TenantResponse`,\n`RouteResponse`, etc.).\n\nUse `Page::new(items, next_cursor)` to construct — the\n`has_more` field is computed from `next_cursor.is_some()` to\nguarantee consistency.\n\n# `ToSchema` derive\n\nThe struct-level bound stays `T: Serialize` (NOT `+ ToSchema`).\nutoipa's `#[derive(ToSchema)]` adds the `ToSchema` bound to its\nown generated impl, matching the way serde adds its own bounds\n— bounds are propagated INTO the impl, not OUT of it onto the\nstruct. Keeping the struct bound minimal means handlers that\nconstruct `Page<X>` for a type that hasn't been\nutoipa-annotated yet still compile; only the `body =\nPage<TenantResponse>` use site in a `#[utoipa::path]`\nannotation triggers the `TenantResponse: ToSchema` requirement.",
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Public response shape for a single domain verification.\n\nMirrors the storage row (`repo::DomainVerification`) minus the\n`expected_value` secret — see the module docs for why.",
+              "required": [
+                "id",
+                "tenant_id",
+                "domain",
+                "verification_type",
+                "challenge_host",
+                "status",
+                "attempts",
+                "created_at",
+                "updated_at",
+                "expires_at"
+              ],
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Auto-assigned verification identifier. Stable for the\nlifetime of the row; not reused after deletion.",
+                  "example": 17
+                },
+                "tenant_id": {
+                  "type": "string",
+                  "description": "Owning tenant. Read-only — derived from the authenticated\ncaller.",
+                  "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+                },
+                "domain": {
+                  "type": "string",
+                  "description": "The customer-supplied domain name being verified. Stored\nas the case-folded form the gateway uses for matching.",
+                  "example": "api.acme.example"
+                },
+                "verification_type": {
+                  "type": "string",
+                  "description": "Verification method. Today: `dns_txt` (TXT record check)\nor `cname` (CNAME chain check). Stored as a string rather\nthan a wire enum so future methods (DNS-01 wildcard,\nHTTP-01 file challenge) can be added without bumping the\nAPI major version.",
+                  "example": "dns_txt"
+                },
+                "challenge_host": {
+                  "type": "string",
+                  "description": "The hostname the gateway queries when running the proof.\nFor `dns_txt` this is typically `_scrutari-verify.<domain>`;\nfor `cname` it's the `<domain>` itself. The dashboard's\nverification UI surfaces this so customers know which\nrecord to inspect when troubleshooting.",
+                  "example": "_scrutari-verify.api.acme.example"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Current verification state. One of:\n\n  - `pending`  — challenge issued, no successful check yet.\n  - `verified` — the gateway has confirmed control.\n  - `failed`   — exceeded max attempts; reset via\n    `/admin/domains` (the public API can't reset).\n  - `expired`  — past `expires_at`; the row stays for audit\n    but no longer counts as proof of control.",
+                  "example": "verified"
+                },
+                "attempts": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Count of verification attempts the gateway has run for\nthis row. Increments on every `dns_txt`/`cname` lookup.\nUsed by the rate-limiter to back off after repeated\nfailures.",
+                  "example": 3
+                },
+                "last_error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Last DNS-level error encountered, or null if no error.\nSurfaced verbatim to the dashboard so customers can\ndistinguish \"record not found\" (likely TTL not propagated)\nfrom \"record present but wrong value\" (likely copy-paste\nmistake).",
+                  "example": "NXDOMAIN"
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp of when the verification row\nwas created (= when the challenge was issued).",
+                  "example": "2026-01-15T09:30:00Z"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp of the most recent verification\nattempt or state change.",
+                  "example": "2026-01-15T09:35:12Z"
+                },
+                "verified_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "ISO 8601 / RFC 3339 timestamp of successful verification, or\nnull if the row has not been verified yet (or has since\nexpired).",
+                  "example": "2026-01-15T09:35:12Z"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp after which this verification\nrow no longer counts as proof of control. The dashboard\nprompts re-verification before this point; expired rows\nremain readable for audit.",
+                  "example": "2027-01-15T09:30:00Z"
+                }
+              }
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_MemberResponse": {
+        "type": "object",
+        "description": "Generic page response. `T` is the resource type (`TenantResponse`,\n`RouteResponse`, etc.).\n\nUse `Page::new(items, next_cursor)` to construct — the\n`has_more` field is computed from `next_cursor.is_some()` to\nguarantee consistency.\n\n# `ToSchema` derive\n\nThe struct-level bound stays `T: Serialize` (NOT `+ ToSchema`).\nutoipa's `#[derive(ToSchema)]` adds the `ToSchema` bound to its\nown generated impl, matching the way serde adds its own bounds\n— bounds are propagated INTO the impl, not OUT of it onto the\nstruct. Keeping the struct bound minimal means handlers that\nconstruct `Page<X>` for a type that hasn't been\nutoipa-annotated yet still compile; only the `body =\nPage<TenantResponse>` use site in a `#[utoipa::path]`\nannotation triggers the `TenantResponse: ToSchema` requirement.",
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Public response shape for a single tenant member.\n\nReturns the minimum-viable shape any membership-management UI\nneeds: identity, role, contact, timestamps. Does NOT include\ninternal fields like `last_session_at` (operational telemetry,\ndashboard-only) or `password_hash` (irrelevant in the OIDC-only\nauth model; not stored in our table).",
+              "required": [
+                "user_id",
+                "tenant_id",
+                "role",
+                "email",
+                "display_name",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "user_id": {
+                  "type": "string",
+                  "description": "Stable identifier for the user across tenants. UUID v4\ngenerated at first sign-in (or at invitation accept).\nHyphenated canonical form on the wire.",
+                  "example": "1f8b3c5a-7d2e-4c89-a013-9b7f60a2e145"
+                },
+                "tenant_id": {
+                  "type": "string",
+                  "description": "Owning tenant. Read-only — derived from the authenticated\ncaller.",
+                  "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+                },
+                "role": {
+                  "type": "string",
+                  "description": "Role assignment. Stored as a string rather than a wire\nenum so role names can evolve additively. Current values:\n\n  - `owner`  — full administrative access; can mint\n    billing-impacting changes.\n  - `admin`  — full operational access; no billing-tier\n    decisions.\n  - `member` — read+write on routes/domains; no\n    member-management or billing.\n  - `viewer` — read-only across the tenant.\n\nRole assignment changes through `/admin/members`; this\npublic surface is read-only.",
+                  "example": "admin"
+                },
+                "email": {
+                  "type": "string",
+                  "description": "Email of record for this member. Used by the dashboard's\ninvitation flow, by audit-log row attribution, and by the\npassword-recovery email path (when applicable to the\ntenant's auth mode).\n\nPII — see the module-level docs for handling guidance.",
+                  "example": "alice@acme.example"
+                },
+                "display_name": {
+                  "type": "string",
+                  "description": "Human-readable name. Falls back to the email if the\nidentity provider didn't supply a display name at\nsign-in (rare; most IdPs supply one).",
+                  "example": "Alice Acme"
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp of when this user first\njoined the tenant (invitation accept, JIT provision, or\nfounder-claim).",
+                  "example": "2026-01-15T09:30:00Z"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp of the most recent change\nto this row (role change, display-name update, etc.).",
+                  "example": "2026-04-22T14:18:42Z"
+                }
+              }
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_RouteResponse": {
+        "type": "object",
+        "description": "Generic page response. `T` is the resource type (`TenantResponse`,\n`RouteResponse`, etc.).\n\nUse `Page::new(items, next_cursor)` to construct — the\n`has_more` field is computed from `next_cursor.is_some()` to\nguarantee consistency.\n\n# `ToSchema` derive\n\nThe struct-level bound stays `T: Serialize` (NOT `+ ToSchema`).\nutoipa's `#[derive(ToSchema)]` adds the `ToSchema` bound to its\nown generated impl, matching the way serde adds its own bounds\n— bounds are propagated INTO the impl, not OUT of it onto the\nstruct. Keeping the struct bound minimal means handlers that\nconstruct `Page<X>` for a type that hasn't been\nutoipa-annotated yet still compile; only the `body =\nPage<TenantResponse>` use site in a `#[utoipa::path]`\nannotation triggers the `TenantResponse: ToSchema` requirement.",
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Wire response for a single route.\n\nReturned by:\n  - `GET    /v1/routes`         (inside `Page<RouteResponse>.data[]`)\n  - `GET    /v1/routes/{id}`\n  - `POST   /v1/routes`         (201 Created)\n  - `PATCH  /v1/routes/{id}`\n\n`DELETE /v1/routes/{id}` returns 204 with no body.",
+              "required": [
+                "id",
+                "tenant_id",
+                "host",
+                "path_prefix",
+                "upstream_url",
+                "strip_path_prefix",
+                "preserve_host_header",
+                "is_active",
+                "auth_mode",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Auto-assigned route identifier. Stable for the lifetime of\nthe row; not reused after deletion. Use in subsequent\n`/v1/routes/{id}` calls.",
+                  "example": 42
+                },
+                "tenant_id": {
+                  "type": "string",
+                  "description": "Owning tenant. Read-only — the gateway populates this from\nthe authenticated API key on create. Cannot be specified or\nchanged via the public API.",
+                  "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+                },
+                "host": {
+                  "type": "string",
+                  "description": "Host header / SNI the route matches against. The host must\nbe verified for this tenant via `POST /admin/domains` before\na route can be created; unverified hosts return\n`403 domain_not_verified` from POST.",
+                  "example": "api.acme.example"
+                },
+                "path_prefix": {
+                  "type": "string",
+                  "description": "URL path prefix the route matches. Must start with `/`.\nCombined with `host` to form the (host, path_prefix) match\nkey — duplicates across tenants return `409 route_conflict`.",
+                  "example": "/orders"
+                },
+                "upstream_url": {
+                  "type": "string",
+                  "description": "Where to forward matched traffic. Must be `http://...` or\n`https://...` with a non-empty host. The gateway terminates\ninbound PQ-TLS and re-establishes outbound TLS (or plain\nHTTP for `http://` upstreams in dev environments).",
+                  "example": "https://internal-orders.acme.example"
+                },
+                "strip_path_prefix": {
+                  "type": "boolean",
+                  "description": "If true, strip `path_prefix` from the request path before\nforwarding. Example: matching `/orders` and forwarding to\n`https://upstream/` rewrites `GET /orders/123` upstream to\n`GET /123`.",
+                  "example": true
+                },
+                "preserve_host_header": {
+                  "type": "boolean",
+                  "description": "If true, forward the client's `Host:` header unchanged.\nDefault false; the gateway substitutes the upstream host\nderived from `upstream_url`. Set true when the upstream's\nvirtual-host routing depends on the original host header.",
+                  "example": false
+                },
+                "is_active": {
+                  "type": "boolean",
+                  "description": "When false, the route is administratively disabled — the\ngateway returns 503 for matching requests instead of\nforwarding. Useful for incident response (cut a route\nwithout deleting it) and for staged rollouts.",
+                  "example": true
+                },
+                "auth_mode": {
+                  "type": "string",
+                  "description": "Authentication mode for traffic on this route:\n\n  - `required` — every request must present a valid API key\n    (or other configured auth). Default; safest posture.\n  - `optional` — auth is checked when present (and forwarded\n    to the upstream via X-Scrutari-* headers) but missing\n    auth doesn't reject. Use for routes that need to serve\n    anonymous and authenticated traffic with the same\n    handler.\n  - `passthrough` — auth is not checked at all. Use for\n    truly public surfaces (marketing pages, health checks).",
+                  "example": "required"
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "Route creation timestamp. RFC 3339 / ISO 8601.",
+                  "example": "2026-01-15T09:30:00Z"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "description": "Last-modified timestamp. Updated on every PATCH that changes\nany field. RFC 3339 / ISO 8601.",
+                  "example": "2026-04-22T14:18:42Z"
+                }
+              }
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Page_TenantResponse": {
+        "type": "object",
+        "description": "Generic page response. `T` is the resource type (`TenantResponse`,\n`RouteResponse`, etc.).\n\nUse `Page::new(items, next_cursor)` to construct — the\n`has_more` field is computed from `next_cursor.is_some()` to\nguarantee consistency.\n\n# `ToSchema` derive\n\nThe struct-level bound stays `T: Serialize` (NOT `+ ToSchema`).\nutoipa's `#[derive(ToSchema)]` adds the `ToSchema` bound to its\nown generated impl, matching the way serde adds its own bounds\n— bounds are propagated INTO the impl, not OUT of it onto the\nstruct. Keeping the struct bound minimal means handlers that\nconstruct `Page<X>` for a type that hasn't been\nutoipa-annotated yet still compile; only the `body =\nPage<TenantResponse>` use site in a `#[utoipa::path]`\nannotation triggers the `TenantResponse: ToSchema` requirement.",
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Tenant wire response.\n\n# Field-level OpenAPI annotations\n\n`#[schema(example = \"...\")]` populates the example values in the\ngenerated OpenAPI spec. These are operator-facing documentation\n— pick values that are obviously fictional but typical-shaped\n(correct length, correct prefix conventions) so a customer\nreading the spec immediately understands the format.",
+              "required": [
+                "id",
+                "name",
+                "plan",
+                "rate_limit_rps",
+                "rate_limit_burst",
+                "concurrency_cap",
+                "features",
+                "created_at",
+                "updated_at"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Tenant identifier. Stable across the tenant's lifetime;\nembedded into API keys and audit log rows. Format is\n`tnt_<base32-no-pad>`, ~28 chars.",
+                  "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Display name as configured by the tenant. Customer-facing\nlabel only; never used for routing or scoping decisions.",
+                  "example": "Acme Corp"
+                },
+                "plan": {
+                  "type": "string",
+                  "description": "Subscription tier. Drives rate limits, plan caps, and\nfeature gates. One of `starter`, `growth`, `enterprise`.",
+                  "example": "growth"
+                },
+                "rate_limit_rps": {
+                  "type": "integer",
+                  "format": "int32",
+                  "description": "Per-tenant rate-limit knobs, surfaced so the operator can\nconfirm what plan the gateway is enforcing without a\nseparate /usage call. Not editable through this surface\ntoday.",
+                  "example": 100
+                },
+                "rate_limit_burst": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 200
+                },
+                "concurrency_cap": {
+                  "type": "integer",
+                  "format": "int32",
+                  "example": 50
+                },
+                "features": {
+                  "type": "object",
+                  "description": "Free-form feature flags. Wire shape is the same JSONB object\nthe gateway reads internally; client SDKs treat unknown keys\nas absent (false). Schema-typed as `object` since the keys\nand values are inherently dynamic."
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp.",
+                  "example": "2026-01-15T09:30:00Z"
+                },
+                "updated_at": {
+                  "type": "string",
+                  "description": "ISO 8601 / RFC 3339 timestamp.",
+                  "example": "2026-04-22T14:18:42Z"
+                }
+              }
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RevokeApiKeyResponse": {
+        "type": "object",
+        "description": "`DELETE /v1/api_keys/{id}` response. Returned with 200 OK on\nsuccessful revocation. The key row stays in storage (marked\n`revoked_at`) so auth-failure audit logs still resolve\n`api_key_id` to a human-readable label after revocation;\n\"delete\" at the API level is \"revoke\" at the data model.",
+        "required": [
+          "id",
+          "revoked"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identifier of the key that was revoked.",
+            "example": "ak_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "revoked": {
+            "type": "boolean",
+            "description": "Always `true` for a successful response — included\nexplicitly so clients that match on the field rather than\nthe HTTP status get a clear signal.",
+            "example": true
+          }
+        }
+      },
+      "RouteResponse": {
+        "type": "object",
+        "description": "Wire response for a single route.\n\nReturned by:\n  - `GET    /v1/routes`         (inside `Page<RouteResponse>.data[]`)\n  - `GET    /v1/routes/{id}`\n  - `POST   /v1/routes`         (201 Created)\n  - `PATCH  /v1/routes/{id}`\n\n`DELETE /v1/routes/{id}` returns 204 with no body.",
+        "required": [
+          "id",
+          "tenant_id",
+          "host",
+          "path_prefix",
+          "upstream_url",
+          "strip_path_prefix",
+          "preserve_host_header",
+          "is_active",
+          "auth_mode",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Auto-assigned route identifier. Stable for the lifetime of\nthe row; not reused after deletion. Use in subsequent\n`/v1/routes/{id}` calls.",
+            "example": 42
+          },
+          "tenant_id": {
+            "type": "string",
+            "description": "Owning tenant. Read-only — the gateway populates this from\nthe authenticated API key on create. Cannot be specified or\nchanged via the public API.",
+            "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "host": {
+            "type": "string",
+            "description": "Host header / SNI the route matches against. The host must\nbe verified for this tenant via `POST /admin/domains` before\na route can be created; unverified hosts return\n`403 domain_not_verified` from POST.",
+            "example": "api.acme.example"
+          },
+          "path_prefix": {
+            "type": "string",
+            "description": "URL path prefix the route matches. Must start with `/`.\nCombined with `host` to form the (host, path_prefix) match\nkey — duplicates across tenants return `409 route_conflict`.",
+            "example": "/orders"
+          },
+          "upstream_url": {
+            "type": "string",
+            "description": "Where to forward matched traffic. Must be `http://...` or\n`https://...` with a non-empty host. The gateway terminates\ninbound PQ-TLS and re-establishes outbound TLS (or plain\nHTTP for `http://` upstreams in dev environments).",
+            "example": "https://internal-orders.acme.example"
+          },
+          "strip_path_prefix": {
+            "type": "boolean",
+            "description": "If true, strip `path_prefix` from the request path before\nforwarding. Example: matching `/orders` and forwarding to\n`https://upstream/` rewrites `GET /orders/123` upstream to\n`GET /123`.",
+            "example": true
+          },
+          "preserve_host_header": {
+            "type": "boolean",
+            "description": "If true, forward the client's `Host:` header unchanged.\nDefault false; the gateway substitutes the upstream host\nderived from `upstream_url`. Set true when the upstream's\nvirtual-host routing depends on the original host header.",
+            "example": false
+          },
+          "is_active": {
+            "type": "boolean",
+            "description": "When false, the route is administratively disabled — the\ngateway returns 503 for matching requests instead of\nforwarding. Useful for incident response (cut a route\nwithout deleting it) and for staged rollouts.",
+            "example": true
+          },
+          "auth_mode": {
+            "type": "string",
+            "description": "Authentication mode for traffic on this route:\n\n  - `required` — every request must present a valid API key\n    (or other configured auth). Default; safest posture.\n  - `optional` — auth is checked when present (and forwarded\n    to the upstream via X-Scrutari-* headers) but missing\n    auth doesn't reject. Use for routes that need to serve\n    anonymous and authenticated traffic with the same\n    handler.\n  - `passthrough` — auth is not checked at all. Use for\n    truly public surfaces (marketing pages, health checks).",
+            "example": "required"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Route creation timestamp. RFC 3339 / ISO 8601.",
+            "example": "2026-01-15T09:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Last-modified timestamp. Updated on every PATCH that changes\nany field. RFC 3339 / ISO 8601.",
+            "example": "2026-04-22T14:18:42Z"
+          }
+        }
+      },
+      "TenantResponse": {
+        "type": "object",
+        "description": "Tenant wire response.\n\n# Field-level OpenAPI annotations\n\n`#[schema(example = \"...\")]` populates the example values in the\ngenerated OpenAPI spec. These are operator-facing documentation\n— pick values that are obviously fictional but typical-shaped\n(correct length, correct prefix conventions) so a customer\nreading the spec immediately understands the format.",
+        "required": [
+          "id",
+          "name",
+          "plan",
+          "rate_limit_rps",
+          "rate_limit_burst",
+          "concurrency_cap",
+          "features",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Tenant identifier. Stable across the tenant's lifetime;\nembedded into API keys and audit log rows. Format is\n`tnt_<base32-no-pad>`, ~28 chars.",
+            "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name as configured by the tenant. Customer-facing\nlabel only; never used for routing or scoping decisions.",
+            "example": "Acme Corp"
+          },
+          "plan": {
+            "type": "string",
+            "description": "Subscription tier. Drives rate limits, plan caps, and\nfeature gates. One of `starter`, `growth`, `enterprise`.",
+            "example": "growth"
+          },
+          "rate_limit_rps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Per-tenant rate-limit knobs, surfaced so the operator can\nconfirm what plan the gateway is enforcing without a\nseparate /usage call. Not editable through this surface\ntoday.",
+            "example": 100
+          },
+          "rate_limit_burst": {
+            "type": "integer",
+            "format": "int32",
+            "example": 200
+          },
+          "concurrency_cap": {
+            "type": "integer",
+            "format": "int32",
+            "example": 50
+          },
+          "features": {
+            "type": "object",
+            "description": "Free-form feature flags. Wire shape is the same JSONB object\nthe gateway reads internally; client SDKs treat unknown keys\nas absent (false). Schema-typed as `object` since the keys\nand values are inherently dynamic."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp.",
+            "example": "2026-01-15T09:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 timestamp.",
+            "example": "2026-04-22T14:18:42Z"
+          }
+        }
+      },
+      "UpdateRouteRequest": {
+        "type": "object",
+        "description": "Request body for `PATCH /v1/routes/{id}`. Every field is\n`Option`; omitted = unchanged. `host` and `tenant_id` are\nintentionally NOT patchable — re-homing a route to a new host\nis a delete-then-create at the API surface (same posture the\ndata plane takes).",
+        "properties": {
+          "path_prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New path prefix. Must start with `/`. Changing this triggers\nthe same `(host, path_prefix)` uniqueness check as POST;\ncollision returns `409 route_conflict`.",
+            "example": "/orders-v2"
+          },
+          "upstream_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New upstream URL. Same validation as POST (`http(s)://` +\nnon-empty host).",
+            "example": "https://internal-orders-v2.acme.example"
+          },
+          "strip_path_prefix": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Toggle `strip_path_prefix`."
+          },
+          "preserve_host_header": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Toggle `preserve_host_header`."
+          },
+          "auth_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Change `auth_mode`. Must be `required` / `optional` /\n`passthrough`. Lowering from `required` to `optional` or\n`passthrough` opens a previously-authenticated route to\nanonymous traffic — review carefully.",
+            "example": "required"
+          },
+          "is_active": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Administrative enable/disable. When false, the route stays\nin the routing table but returns 503 for matching requests.\nUse for cut-without-delete during incident response.",
+            "example": true
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "api_key": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "tenants",
+      "description": "Tenant resource — read the caller's own tenant row."
+    },
+    {
+      "name": "routes",
+      "description": "Route resource — full CRUD. Primary surface managed by the Scrutari Terraform provider's `scrutari_route` resource. Routes map customer-facing `(host, path_prefix)` pairs to upstream URLs that the gateway proxies traffic to."
+    },
+    {
+      "name": "api_keys",
+      "description": "API key resource — mint, list, revoke. **The plaintext secret is returned exactly once** in the `POST /v1/api_keys` response (`IssuedApiKeyResponse.plaintext`); subsequent reads via `GET /v1/api_keys` use the masked `ApiKeyResponse` shape that carries only metadata + `key_hint`. There is no recovery path for lost keys; revoke and re-issue."
+    },
+    {
+      "name": "domains",
+      "description": "Domain verification resource — read-only on the public API. Domain registration and verification orchestration happen via the dashboard or the operator-tier `/admin/domains` surface; the public read endpoints exist so a Terraform `data \"scrutari_domain\"` data source can inspect verified-domain state without mutating it. The wire shape DELIBERATELY excludes the `expected_value` verification secret — surfacing it would let any holder of a `domains:read` key forge proofs of control."
+    },
+    {
+      "name": "members",
+      "description": "Tenant membership resource — read-only on the public API. Identity, role, contact info, and timestamps. Adding / removing members and changing roles happen via the dashboard or `/admin/members`. PII surface — email and display_name are exposed; same disclosure as `/admin/members` so no new attack surface, but callers should handle responses with PII-appropriate care."
+    },
+    {
+      "name": "traces",
+      "description": "Live request/handshake trace stream. The single endpoint here (`GET /v1/traces/stream`) returns a long-lived `text/event-stream` of events as the gateway processes them. Designed for dashboard observability surfaces; programmatic consumers should use `EventSource` (browser) or an equivalent SSE library and implement reconnect-with-`Last-Event-ID` for gap-free resume across network blips. The data payload shape is documented in prose on the endpoint (not yet a typed OpenAPI schema — followup #230)."
+    }
+  ]
+}

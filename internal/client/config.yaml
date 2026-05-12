@@ -1,0 +1,79 @@
+# oapi-codegen configuration for the Scrutari Terraform provider's
+# wire-DTO surface. Read by `make generate` (and the
+# `make generate-check` CI gate) to regenerate `client.gen.go` from
+# the committed `openapi.json`.
+#
+# # Hybrid posture
+#
+# This config emits ONLY the DTO types — no HTTP client, no server.
+# The provider's hand-rolled `Client` struct in
+# `internal/provider/client.go` remains the public surface; it owns
+# concerns that openapi-generator-cli and oapi-codegen both miss out
+# of the box: idempotency-key seeding (`TF_RUN_ID` or generated
+# UUID), strict scru_live_ / scru_test_ key-prefix validation,
+# version-baked User-Agent for gateway-side audit attribution, and
+# wall-clock-matched timeouts. Stamping a generated client over that
+# would lose 200 lines of intentional design for no upside.
+#
+# What we DO get from codegen: the wire DTOs (`RouteResponse`,
+# `CreateRouteRequest`, `UpdateRouteRequest`, `DomainResponse`,
+# `ApiKeyResponse`, `IssuedApiKeyResponse`, the `Page_*` envelopes,
+# and the `ApiError` envelope) — every shape the gateway emits or
+# accepts on its `/v1/*` surface, in lockstep with the committed
+# spec. A field rename or type change on the gateway side surfaces
+# as a Go compile error in the provider, not a runtime JSON-decode
+# error in the field.
+#
+# # Package
+#
+# The output goes to `internal/client` (a Go package named `client`),
+# imported by `internal/provider` as `gwclient` (alias chosen to
+# disambiguate from `terraform-plugin-framework`'s own `*Client`-ish
+# types and to keep the provider's hand-rolled `Client` struct
+# unambiguous).
+
+package: client
+
+# Single output file with all type definitions inline. The alternative
+# (split into `types.gen.go` + `client.gen.go`) would only matter if we
+# were also emitting the client surface, which we aren't.
+output: internal/client/client.gen.go
+
+generate:
+  # ON: produce Go structs for every schema component the spec
+  # defines. This is the only thing we want from codegen.
+  models: true
+
+  # OFF: we have a hand-rolled HTTP client. Generating a parallel
+  # one would just bloat the binary and confuse contributors over
+  # which client is canonical.
+  client: false
+
+  # OFF: we don't host a server; we consume the gateway's API.
+  std-http-server: false
+  chi-server: false
+  echo-server: false
+  fiber-server: false
+  gin-server: false
+  gorilla-server: false
+  iris-server: false
+
+  # OFF: would compile the spec into a Go []byte. We don't ship the
+  # spec at runtime — it's a build-time artifact for codegen only.
+  embedded-spec: false
+
+output-options:
+  # Keep every generated symbol in the output, even ones the provider
+  # doesn't currently reference. The Terraform provider grows resource
+  # by resource (route → api_key → member → ...); generating only the
+  # subset we use today would force a config change on every new
+  # resource. Cheaper to carry a few unused structs than to keep
+  # this filter in sync.
+  skip-prune: true
+
+  # Use omitempty on optional fields. The gateway's serde layer
+  # `skip_serializing_if = "Option::is_none"` posture means optional
+  # fields are absent (not null) on the wire; mirroring that on the
+  # Go side keeps round-trip equality clean for tests that capture
+  # gateway responses as golden fixtures.
+  user-templates: {}

@@ -1,0 +1,23 @@
+terraform-provider-scrutari
+terraform-provider-scrutari.exe
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.idea/
+.vscode/
+*.swp
+.DS_Store
+coverage.out
+
+# Build artifacts.
+# - bin/ holds tool binaries (oapi-codegen, tfplugindocs) that
+#   `make tools` installs. Versions are pinned in the Makefile;
+#   the bins themselves are not source-of-truth.
+# - openapi.compat.json is the transient 3.0-downcast form of the
+#   canonical 3.1 spec; regenerated on every `make generate` via
+#   the jq filter in `compat-spec`. Goes away when oapi-codegen
+#   ships 3.1 support (their issue #373).
+bin/
+internal/client/openapi.compat.json
