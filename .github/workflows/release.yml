@@ -1,0 +1,122 @@
+# Release pipeline — fires on every `v*` tag push, runs GoReleaser
+# end-to-end (cross-compile → archive → checksum → GPG-sign →
+# publish to GitHub Releases). The Terraform Registry's webhook
+# then ingests the release automatically, validates the signature
+# against the namespace's published GPG public key, and indexes the
+# new version.
+#
+# # One-time setup (already done if you're reading this — but
+# captured here so a future contributor can rebuild it from scratch
+# without spelunking the README):
+#
+#   1. Generate a release GPG keypair (don't reuse a personal key
+#      — the private half lives in CI):
+#
+#        gpg --full-generate-key   # RSA 4096, no expiry, name +
+#                                  # email = "Scrutari Terraform
+#                                  # Provider Release"
+#
+#   2. Export the ASCII-armored private half:
+#
+#        gpg --armor --export-secret-keys <FINGERPRINT> > priv.asc
+#
+#   3. Add three GitHub repo secrets (Settings → Secrets and
+#      variables → Actions):
+#
+#        GPG_PRIVATE_KEY  — the contents of priv.asc
+#        PASSPHRASE       — the passphrase you set in step 1
+#        GPG_FINGERPRINT  — the long fingerprint string from
+#                          `gpg --list-secret-keys --keyid-format
+#                          LONG` (used by .goreleaser.yml's
+#                          `--local-user` flag)
+#
+#   4. Export the ASCII-armored PUBLIC half and upload it to the
+#      Terraform Registry's namespace settings:
+#
+#        gpg --armor --export <FINGERPRINT> > pub.asc
+#        # Then: registry.terraform.io → User Settings →
+#        # Signing Keys → Add. Paste the contents of pub.asc.
+#
+#   5. Connect the GitHub repo to the `scrutari` namespace in the
+#      Terraform Registry UI (one-time per namespace). The
+#      Registry then watches for new releases on the repo.
+#
+# # Cutting a release
+#
+# Once setup is done, releasing is just:
+#
+#   git tag -a v0.2.0 -m "Customer-facing routes + api keys + data
+#                         sources"
+#   git push origin v0.2.0
+#
+# This workflow takes ~5 minutes end-to-end. The Registry typically
+# ingests the published release within a few minutes after that.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Release needs to write to the repo (creating a GitHub Release and
+# uploading the artifacts to it). `contents: write` is the
+# narrowest permission that allows both.
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    # 30m timeout covers the cross-compile matrix (8 platforms ×
+    # ~10s build each) plus archive + sign + upload. Normal runs
+    # finish in ~5m; the headroom is for network slowdowns talking
+    # to GitHub's release-upload API.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # GoReleaser uses git history to compute the changelog
+          # (commits since the previous tag). Full clone, no
+          # shallow.
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Import the release-time GPG private key into the runner's
+      # keyring. crazy-max/ghaction-import-gpg handles the
+      # gpg-agent dance (preset passphrase, trust the key
+      # implicitly, etc.) that's annoying to write by hand. The
+      # action's outputs include `fingerprint`, which we feed
+      # straight into GoReleaser's signing config via the env var
+      # the .goreleaser.yml references.
+      - name: Import GPG key
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+
+      # GoReleaser does the cross-compile, archive, checksum,
+      # signing, and GitHub-Release-upload in one invocation.
+      # Config lives in `.goreleaser.yml`. `version: latest` keeps
+      # us on the most recent v2.x; pin to a fixed minor (e.g.
+      # `~> 2.5`) if you'd rather not pick up new releases
+      # automatically.
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          # GoReleaser reads these env vars. GITHUB_TOKEN
+          # authenticates the release-upload API call;
+          # GPG_FINGERPRINT is what the `--local-user` flag in
+          # `.goreleaser.yml` resolves to.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

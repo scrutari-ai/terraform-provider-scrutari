@@ -1,0 +1,124 @@
+# Continuous-integration gauntlet — runs on every PR and every push
+# to `main`. Verifies the provider compiles cleanly, the codegen
+# isn't drifted against the committed `openapi.json`, the code is
+# `gofmt`-clean, `go vet` is silent, and the (currently empty) unit
+# test suite passes.
+#
+# Deliberately NOT running acceptance tests on every PR — those
+# spin up real resources against the gateway (route creates, key
+# mints, etc.) and would burn through the CI sandbox's tenant
+# quota in a single PR-heavy day. Acceptance is run on a separate
+# schedule (or manually via workflow_dispatch — see the
+# `acceptance.yml` follow-up).
+#
+# Hosted runner: `ubuntu-latest` is fine for a Go provider; we
+# don't have any OS-specific build paths. The Goreleaser release
+# workflow does a cross-compile matrix on `ubuntu-latest` too —
+# Linux cross-compiles to darwin/windows/freebsd via the standard
+# Go toolchain with no host-arch dependency.
+
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+# Cancel in-flight CI runs when a PR gets a new push — saves
+# runner-minutes and gives faster feedback on the latest commit.
+# Pushes to `main` get a unique group so back-to-back merges don't
+# cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Default GITHUB_TOKEN permissions are scoped to the minimum each
+# step actually needs. `contents: read` lets actions/checkout pull
+# the source; nothing in this workflow writes back to the repo, so
+# everything else stays denied.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # Keep the version pin synced with the `go` directive in
+          # go.mod. The setup-go action's `go-version-file` reads
+          # straight from go.mod so the pin lives in one place.
+          go-version-file: go.mod
+          # Module cache is restored automatically by this action;
+          # the `cache: true` default also covers `~/.cache/go-build`
+          # for the build cache.
+          cache: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      # `make tools` installs oapi-codegen into ./bin/. The version is
+      # pinned in the Makefile (`OAPI_CODEGEN_VERSION ?= v2.5.0`); CI
+      # caches it via the module-cache restore above (oapi-codegen
+      # is a Go module, so `go install` reuses cached deps).
+      - name: Install codegen tools
+        run: make tools
+
+      # Codegen drift gate. Regenerates `internal/client/client.gen.go`
+      # from the committed `openapi.json` (via the jq-downcasted
+      # compat spec) and fails if the result differs from what's
+      # committed. Mirrors the gateway-side openapi drift gate
+      # (#222) — spec and generated client stay in lockstep, or
+      # CI surfaces the diff for review.
+      - name: Codegen drift check
+        run: make generate-check
+
+      # `gofmt -l` lists files that need reformatting; an empty
+      # output means the tree is clean. `test -z` exits non-zero if
+      # there's any output, which fails the step. Same pattern the
+      # standard Go project uses.
+      - name: Check gofmt
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::The following files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build -v ./...
+
+      # `go test ./...` — currently exits with "no test files" on
+      # all three packages. Wired now so the gauntlet runs as soon
+      # as a test file lands; no churn at the workflow level when
+      # we add the first unit test.
+      - name: Run tests
+        run: go test -v -timeout 5m ./...
+
+      # Terraform Registry validates the HCL in `examples/` when it
+      # ingests a release — block PRs that would surface as a
+      # publish-time failure. `terraform-validate` would catch this
+      # too, but `terraform fmt -check` is the fast path and
+      # everything in examples/ should be hand-written-and-formatted
+      # anyway.
+      - name: Check Terraform examples are formatted
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.*"
+          terraform_wrapper: false
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive examples/

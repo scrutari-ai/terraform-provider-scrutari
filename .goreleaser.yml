@@ -1,0 +1,172 @@
+# GoReleaser configuration for the Scrutari Terraform provider.
+#
+# Invoked by `.github/workflows/release.yml` on every `v*` git tag.
+# Produces the bundle the Terraform Registry expects:
+#
+#   * one cross-compiled `terraform-provider-scrutari` binary per
+#     supported (GOOS, GOARCH) pair
+#   * each binary zipped under the canonical name
+#     `terraform-provider-scrutari_${VERSION}_${OS}_${ARCH}.zip` —
+#     the Registry's ingestion pipeline grep-finds artifacts by this
+#     pattern, so the naming is a load-bearing contract not a
+#     cosmetic choice
+#   * `terraform-provider-scrutari_${VERSION}_SHA256SUMS` — manifest
+#     of every archive's sha256
+#   * `terraform-provider-scrutari_${VERSION}_SHA256SUMS.sig` — GPG
+#     detached signature of the SHA256SUMS file. The Registry
+#     validates this against the GPG public key the namespace
+#     owner uploaded in the Registry UI (one-time setup; see the
+#     README's "Publishing" section).
+#   * `terraform-provider-scrutari_${VERSION}_manifest.json` — the
+#     `terraform-registry-manifest.json` from the repo, renamed to
+#     include the version. Declares which Terraform Plugin Protocol
+#     version this build speaks (6.0 for terraform-plugin-framework).
+#
+# Once GoReleaser publishes these to the GitHub Release, the
+# Terraform Registry's webhook fires (assuming the namespace is
+# linked to the GitHub repo — also one-time setup), pulls all the
+# above artifacts, verifies the signature, and indexes the
+# version. `terraform init` against `scrutari/scrutari` then
+# resolves to the new release.
+#
+# # Why pin GoReleaser via the workflow's action, not via this file
+#
+# The version pin lives in `.github/workflows/release.yml`'s
+# `goreleaser-action@vX` step. Keeping it there means a `cargo
+# update`-style refresh (bump the action ref, regenerate this
+# config if the schema shifted) is one workflow PR rather than
+# two-file drift.
+
+version: 2
+
+# Run `go mod tidy` before building so the release happens against
+# a clean dep graph. Catches "someone forgot to commit go.sum" at
+# release time rather than at first-customer-install time.
+before:
+  hooks:
+    - go mod tidy
+
+# ─── Build matrix ──────────────────────────────────────────────────
+#
+# Mirrors the Terraform Registry's published support matrix as of
+# late 2025: every host platform Terraform itself ships for. The
+# ignore list captures combinations where the upstream Go runtime,
+# Terraform Core, or the Registry's distribution model don't
+# overlap (e.g. there is no darwin/386 Go toolchain; freebsd/arm64
+# Go ships but Terraform Core doesn't release for it).
+#
+# `mod_timestamp = {{ .CommitTimestamp }}` makes the binary
+# reproducible: rebuilding the same git SHA on a different machine
+# produces a byte-identical artifact. Combined with `-trimpath` and
+# the static `-ldflags`, downstream consumers can verify a binary
+# came from the committed source even without trusting the build
+# host.
+builds:
+  - env:
+      - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - "-s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }}"
+    goos:
+      - freebsd
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - "386"
+      - arm
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: "386"
+      - goos: freebsd
+        goarch: arm64
+    binary: "{{ .ProjectName }}_v{{ .Version }}"
+
+# ─── Archive ───────────────────────────────────────────────────────
+#
+# The Registry's ingestion grep-matches this exact filename pattern;
+# do not change `name_template` without also updating the Registry's
+# expectations (which would require coordinating with HashiCorp's
+# infra team — there is no override). `format: zip` is required;
+# tarballs aren't accepted.
+archives:
+  - format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+# ─── Checksum manifest ─────────────────────────────────────────────
+#
+# Filename pattern is also load-bearing — the Registry pulls this
+# specific name. The `.sig` companion (next stanza) is what they
+# actually verify against your GPG public key.
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+  extra_files:
+    # Bundle the registry manifest into the checksum so the
+    # Registry can verify it hasn't been tampered with. Same file
+    # the repo root carries; renamed at release time to include the
+    # version so it lives alongside the per-platform archives in
+    # the GitHub Release.
+    - glob: "terraform-registry-manifest.json"
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
+
+# ─── GPG signature on the checksum file ────────────────────────────
+#
+# The Registry's ingestion verifies the SHA256SUMS.sig detached
+# signature against the GPG public key the namespace owner uploaded
+# in the Registry UI. If the signature fails — wrong key, missing
+# key, corrupted artifact — the release is rejected and never
+# becomes installable. This is the integrity layer that protects
+# customers from a compromised build host serving them tampered
+# binaries via the Registry's CDN.
+#
+# `GPG_FINGERPRINT` must match the long fingerprint of the public
+# key registered with HashiCorp; export with `gpg --list-secret-keys
+# --keyid-format LONG`. The private key + passphrase get plumbed
+# into the workflow via repo secrets (see release.yml).
+signs:
+  - artifacts: checksum
+    cmd: gpg
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+# ─── GitHub Release shape ──────────────────────────────────────────
+#
+# `mode: append` so a manually-cut release (e.g. someone clicked
+# "Generate release notes" in the GitHub UI before the tag was
+# pushed) doesn't get clobbered — GoReleaser just adds the artifact
+# attachments. `draft: false` because the Registry only ingests
+# published releases; a draft sitting around is invisible to
+# downstream consumers.
+release:
+  draft: false
+  prerelease: auto
+
+# ─── Changelog ─────────────────────────────────────────────────────
+#
+# Reasonable filters for a small provider's auto-generated release
+# notes. Conventional-commit subjects (feat:, fix:, etc.) land in
+# their respective sections; chore/test/docs commits are filtered
+# out so the release notes stay user-facing.
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^test:"
+      - "^chore:"
+      - "^docs:"
+      - merge conflict
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
