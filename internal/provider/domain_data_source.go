@@ -63,17 +63,50 @@ func (d *DomainDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				MarkdownDescription: "Domain verification id.",
 				Required:            true,
 			},
-			"tenant_id":         schema.StringAttribute{Computed: true},
-			"domain":            schema.StringAttribute{Computed: true, MarkdownDescription: "The hostname being verified (e.g. `api.acme-corp.com`)."},
-			"verification_type": schema.StringAttribute{Computed: true, MarkdownDescription: "`txt` or `cname` — which DNS record family proves control."},
-			"challenge_host":    schema.StringAttribute{Computed: true, MarkdownDescription: "DNS host the customer creates the verification record on (e.g. `_scrutari-challenge.api.acme-corp.com`)."},
-			"status":            schema.StringAttribute{Computed: true, MarkdownDescription: "`pending` / `verified` / `failed` / `expired`."},
-			"attempts":          schema.Int64Attribute{Computed: true, MarkdownDescription: "Number of verification attempts so far."},
-			"last_error":        schema.StringAttribute{Computed: true, MarkdownDescription: "Most recent verification error message, if any."},
-			"created_at":        schema.StringAttribute{Computed: true},
-			"updated_at":        schema.StringAttribute{Computed: true},
-			"verified_at":       schema.StringAttribute{Computed: true, MarkdownDescription: "RFC 3339 timestamp the verification succeeded; null until verified."},
-			"expires_at":        schema.StringAttribute{Computed: true, MarkdownDescription: "When this verification request expires if not yet completed (default: 7 days from creation)."},
+			"tenant_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Tenant that owns this domain. Derived from the caller's authenticated key; read-only.",
+			},
+			"domain": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The hostname being verified (e.g. `api.acme-corp.com`). Case-folded on the server side.",
+			},
+			"verification_type": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "`dns_txt` or `cname` — which DNS record family proves control of the domain.",
+			},
+			"challenge_host": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "DNS host the customer creates the verification record on (e.g. `_scrutari-challenge.api.acme-corp.com` for `dns_txt`).",
+			},
+			"status": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Current verification state — one of `pending` / `verified` / `failed` / `expired`.",
+			},
+			"attempts": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "Count of verification attempts the gateway has run for this row. The rate-limiter backs off after repeated failures.",
+			},
+			"last_error": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Most recent verification error message, if any. `null` when the last attempt succeeded or no attempts have run yet.",
+			},
+			"created_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp of when the verification row was created (= when the challenge was issued).",
+			},
+			"updated_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp of the most recent verification attempt or state change.",
+			},
+			"verified_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp the verification succeeded; `null` until verified (or after expiry).",
+			},
+			"expires_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp after which this verification row no longer counts as proof of control (default: 7 days from creation).",
+			},
 		},
 	}
 }

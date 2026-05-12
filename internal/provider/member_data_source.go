@@ -68,12 +68,30 @@ func (d *MemberDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 					),
 				},
 			},
-			"tenant_id":    schema.StringAttribute{Computed: true},
-			"role":         schema.StringAttribute{Computed: true, MarkdownDescription: "`owner` / `admin` / `operator` / `viewer` / `auditor`."},
-			"email":        schema.StringAttribute{Computed: true},
-			"display_name": schema.StringAttribute{Computed: true},
-			"created_at":   schema.StringAttribute{Computed: true},
-			"updated_at":   schema.StringAttribute{Computed: true},
+			"tenant_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Tenant this member belongs to. Derived from the caller's authenticated key; read-only.",
+			},
+			"role": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Role assignment — one of `owner` / `admin` / `operator` / `viewer` / `auditor`. Role changes flow through `/admin/members`; this surface is read-only.",
+			},
+			"email": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Email of record for this member. Used for invitations, password-recovery flows (where applicable to the tenant's auth mode), and audit-log attribution. PII — handle accordingly.",
+			},
+			"display_name": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Human-readable display name supplied by the identity provider at sign-in. Falls back to the email when the IdP doesn't supply one.",
+			},
+			"created_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp of when this user first joined the tenant (invitation accept, JIT-provision, or founder-claim).",
+			},
+			"updated_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp of the most recent change to this row (role change, display-name update, etc.).",
+			},
 		},
 	}
 }

@@ -44,19 +44,35 @@ test:
 acceptance:
 	TF_ACC=1 go test -v ./internal/provider/ -timeout 30m
 
+# Pinned tfplugindocs version. Same posture as OAPI_CODEGEN_VERSION
+# below — keeps every developer's docs generation deterministic
+# regardless of when they first ran `make docs`. Bumping requires a
+# Makefile PR (and the regenerated docs/ tree it produces should be
+# the same diff every committer sees).
+TFPLUGINDOCS_VERSION ?= v0.20.1
+
+# Install tfplugindocs into $(TOOLS_BIN). Mirrors the `tools` target
+# pattern for oapi-codegen — `go install` parks the bin in
+# $GOPATH/bin by default, which isn't reliably in PATH. Installing
+# to $(TOOLS_BIN) and invoking it via the absolute path side-steps
+# the PATH problem on every developer's machine and in CI.
+$(TOOLS_BIN)/tfplugindocs:
+	@mkdir -p $(TOOLS_BIN)
+	@echo "→ Installing tfplugindocs $(TFPLUGINDOCS_VERSION) into $(TOOLS_BIN)"
+	GOBIN=$(TOOLS_BIN) go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@$(TFPLUGINDOCS_VERSION)
+
 # Generate registry docs from schema MarkdownDescriptions and
-# examples/. Pull tfplugindocs once per machine; subsequent runs use
-# the cached binary.
-docs:
-	@which tfplugindocs > /dev/null || go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
-	tfplugindocs generate --provider-name ${NAME}
+# examples/. The dependency on $(TOOLS_BIN)/tfplugindocs makes this
+# idempotent — first run installs, subsequent runs reuse the
+# cached binary.
+docs: $(TOOLS_BIN)/tfplugindocs
+	$(TOOLS_BIN)/tfplugindocs generate --provider-name ${NAME}
 
 # CI guard: fail if committed docs don't match what the schema would
 # generate. Catches "docs got stale because someone forgot to run
 # `make docs`" in PRs.
-docs-check:
-	@which tfplugindocs > /dev/null || go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
-	tfplugindocs generate --provider-name ${NAME}
+docs-check: $(TOOLS_BIN)/tfplugindocs
+	$(TOOLS_BIN)/tfplugindocs generate --provider-name ${NAME}
 	@git diff --exit-code docs/ || (echo "::error::docs are stale. Run 'make docs' and commit." && exit 1)
 
 # Pull the latest deps. Run after editing imports.

@@ -55,15 +55,42 @@ func (d *TenantDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "The tenant owned by the authenticated API key. There is no `id` lookup parameter — the gateway's tenant-isolation discipline (Task #54) means each key is scoped to exactly one tenant, so the data source returns that tenant unconditionally.",
 		Attributes: map[string]schema.Attribute{
-			"id":               schema.StringAttribute{Computed: true, MarkdownDescription: "Tenant ID slug."},
-			"name":             schema.StringAttribute{Computed: true},
-			"plan":             schema.StringAttribute{Computed: true, MarkdownDescription: "`starter` / `growth` / `enterprise`."},
-			"rate_limit_rps":   schema.Int64Attribute{Computed: true},
-			"rate_limit_burst": schema.Int64Attribute{Computed: true},
-			"concurrency_cap":  schema.Int64Attribute{Computed: true},
-			"features":         schema.StringAttribute{Computed: true, MarkdownDescription: "JSON-encoded feature flag bag. Use `jsondecode()` in HCL to read individual flags."},
-			"created_at":       schema.StringAttribute{Computed: true},
-			"updated_at":       schema.StringAttribute{Computed: true},
+			"id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Tenant ID slug (`tnt_<26-char-ulid>`). Stable across the tenant's lifetime.",
+			},
+			"name": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Customer-facing display name for the tenant. Set during onboarding; editable via the dashboard.",
+			},
+			"plan": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Subscription tier — one of `starter` / `growth` / `enterprise`. Drives rate-limit and concurrency caps below.",
+			},
+			"rate_limit_rps": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "Steady-state request-rate cap (requests/second) the gateway enforces for this tenant. Set by the plan tier.",
+			},
+			"rate_limit_burst": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "Burst capacity above `rate_limit_rps` — the token-bucket depth the limiter allows before throttling kicks in.",
+			},
+			"concurrency_cap": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "Maximum number of in-flight requests the gateway accepts per tenant before shedding load with `503 Service Unavailable`.",
+			},
+			"features": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "JSON-encoded feature flag bag. Use `jsondecode()` in HCL to read individual flags. Unknown keys are treated as absent (false).",
+			},
+			"created_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp when this tenant was provisioned.",
+			},
+			"updated_at": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "RFC 3339 timestamp of the most recent change to the tenant row (plan tier, name, feature flags, etc.).",
+			},
 		},
 	}
 }
