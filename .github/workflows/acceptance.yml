@@ -1,0 +1,157 @@
+# Acceptance test workflow — runs the live-gateway test suite against
+# the tnt_terraform_provider_ci sandbox tenant.
+#
+# Deliberately NOT triggered by pull_request:
+#   - Secrets aren't available to fork PRs (GitHub's standard guard),
+#     so a fork-PR acceptance run would fail with empty SCRUTARI_API_KEY.
+#   - Even on first-party branches, allowing PR-triggered acceptance
+#     would let any contributor with PR access burn through the CI
+#     tenant's quota. push-to-main + manual dispatch is enough.
+#
+# The companion build/lint workflow (test.yml) runs on every PR and
+# push and is the gatekeeper for the merge button. This workflow runs
+# AFTER merge as the live-integration verification, plus on demand via
+# the Actions tab "Run workflow" button when a maintainer wants to
+# pre-flight a branch against the real gateway.
+#
+# Hosted runner: ubuntu-latest, same as test.yml. The acceptance suite
+# spawns terraform plan/apply via terraform-plugin-testing, which calls
+# the Terraform CLI installed by hashicorp/setup-terraform.
+
+name: Acceptance
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  # Weekly drift smoke-test. Disabled by default because the sandbox
+  # tenant is starter-plan and we want every acceptance run to be a
+  # deliberate operator decision while the suite is still maturing.
+  # Enable once the suite is reliably green and we want a scheduled
+  # canary that surfaces gateway-side drift in the off-hours.
+  # schedule:
+  #   - cron: '0 9 * * 1'  # Mondays 09:00 UTC
+
+# Acceptance tests CREATE then DELETE real resources on the CI
+# tenant. Cancelling a run mid-apply would leave orphan routes (the
+# CheckDestroy step would never fire), so we serialise via a fixed
+# concurrency group keyed on the tenant id. `cancel-in-progress: false`
+# means the second push waits for the first to drain rather than
+# guillotining it. The group key includes the tenant id so if we ever
+# add a second sandbox tenant for parallel testing, the groups stay
+# independent.
+concurrency:
+  group: acceptance-tnt-terraform-provider-ci
+  cancel-in-progress: false
+
+# Minimum-privilege token. The acceptance suite needs to read the
+# repo (checkout) and nothing else; we explicitly DON'T need
+# packages:read or id-token:write because this workflow doesn't talk
+# to the GitHub Container Registry or claim a federated identity.
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    name: Live-gateway acceptance
+    runs-on: ubuntu-latest
+    # 30 minutes is generous for a four-test suite that does ~12 HTTP
+    # round-trips per test; if we ever hit this ceiling something is
+    # legitimately wedged. The Makefile's `acceptance` target already
+    # passes -timeout 30m to `go test`, so this outer ceiling matches.
+    timeout-minutes: 30
+
+    env:
+      # `terraform-plugin-testing` skips every TestAcc* function when
+      # TF_ACC is unset — the framework's safety belt against running
+      # live-resource tests accidentally during `go test ./...`.
+      TF_ACC: '1'
+      # SCRUTARI_CI_KEY is the scru_test_* bootstrap key for the
+      # tnt_terraform_provider_ci tenant. Parked at
+      # Settings → Secrets and variables → Actions in this repo.
+      # The acceptance harness's testAccPreCheck refuses to run with a
+      # non-scru_test_ prefix, so a stray live key here fails fast.
+      SCRUTARI_API_KEY: ${{ secrets.SCRUTARI_CI_KEY }}
+      # Production control-plane host. Hard-coded rather than parameterised
+      # because we have exactly one acceptance target today; if we ever
+      # add a staging gateway, this becomes `vars.SCRUTARI_HOST` with a
+      # repo-variable default.
+      SCRUTARI_HOST: https://api.edge.scrutari.ai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # Read the Go pin straight from go.mod, same as test.yml. One
+          # source of truth, no drift between the two workflows.
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          # Keep in lockstep with test.yml's terraform-fmt step.
+          terraform_version: "1.10.*"
+          # The setup action's default wrapper intercepts the Terraform
+          # CLI's stdout to surface plan/apply output in PR comments.
+          # terraform-plugin-testing parses that stdout directly to
+          # capture state, and the wrapper interferes with the parsing.
+          # MUST be false for the test framework to work.
+          terraform_wrapper: false
+
+      # No `make tools` / `make generate-check` here — those are the
+      # PR-gate's job. If a stale generated client gets merged to main,
+      # `go build` (implicit in `go test`) would catch it on this run
+      # too, just one layer later. Not worth running the drift check
+      # twice on every push.
+      - name: Pre-flight environment
+        run: |
+          echo "Go version:        $(go version)"
+          echo "Terraform version: $(terraform version | head -1)"
+          echo "TF_ACC:            $TF_ACC"
+          echo "SCRUTARI_HOST:     $SCRUTARI_HOST"
+          # NEVER echo SCRUTARI_API_KEY — secret-masking would mask it
+          # but logging it deliberately is sloppy. Just confirm it's set.
+          if [ -z "$SCRUTARI_API_KEY" ]; then
+            echo "::error::SCRUTARI_API_KEY (from secret SCRUTARI_CI_KEY) is unset. Configure the secret at Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          # Belt-and-braces: confirm we're using a test key, mirroring
+          # the testAccPreCheck guard in provider_test.go. If a live
+          # key ever ends up in this secret slot, fail before any test
+          # creates a route on a paying tenant.
+          case "$SCRUTARI_API_KEY" in
+            scru_test_*) echo "SCRUTARI_API_KEY: scru_test_* prefix confirmed" ;;
+            *)
+              echo "::error::SCRUTARI_API_KEY does NOT have the scru_test_ prefix. Refusing to run acceptance tests against a non-test key. Re-mint via the CI sandbox tenant's bootstrap flow and re-park the secret."
+              exit 1
+              ;;
+          esac
+
+      - name: Run acceptance tests
+        # The Makefile's `acceptance` target is
+        #   TF_ACC=1 go test -v ./internal/provider/ -timeout 30m
+        # We already set TF_ACC=1 in `env:` above, but the Makefile
+        # sets it again redundantly which is harmless.
+        run: make acceptance
+
+      # TODO (#269 follow-up): post-run cleanup of orphan routes.
+      # CheckDestroy in routes_acceptance_test.go covers the happy
+      # path — every successful test cleans up its own resources.
+      # But if a test panics or the runner SIGKILLs mid-apply, the
+      # tenant gets an orphan /acc-* prefixed route. The follow-up
+      # script enumerates /v1/routes via the CI key and DELETEs any
+      # whose path_prefix matches /acc-* AND whose created_at is
+      # older than 1 hour (the "old enough that no live test could
+      # legitimately still be using it" threshold). Tracked separately
+      # to keep this workflow's first version minimal.
+      # - name: Cleanup orphan acceptance routes
+      #   if: always()
+      #   run: ./scripts/cleanup_acceptance_orphans.sh
