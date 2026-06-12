@@ -2089,6 +2089,141 @@
         ]
       }
     },
+    "/v1/transport_policy": {
+      "get": {
+        "tags": [
+          "transport_policy"
+        ],
+        "summary": "Read the tenant's transport policy. The document conceptually\nalways exists: a tenant that never wrote one reads the default\n(`any` / `monitor`, `updated_at` null).",
+        "operationId": "get_transport_policy",
+        "responses": {
+          "200": {
+            "description": "The tenant's transport-policy document (the default when never written).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransportPolicyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `transport_policy:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "transport_policy:read"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "transport_policy"
+        ],
+        "summary": "Replace the tenant's transport policy. The write is durable\nimmediately and visible to enforcement within one cache-refresh\ninterval (60 seconds) on every gateway pod.",
+        "description": "The D2 gate: `mode=enforce` is accepted only when THIS deployment\ncan attest the requested floor — a floor the listener posture\ncannot prove is refused with `transport_policy_not_attestable`\nrather than accepted and silently unenforced. `mode=monitor`\naccepts any floor (honestly-unknowable verdicts are themselves\nevidence).",
+        "operationId": "put_transport_policy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutTransportPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Policy written. Enforcement converges within one cache-refresh interval (60s) on every pod.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransportPolicyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `transport_policy:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown vocabulary, or `mode=enforce` with a floor this deployment cannot attest (`transport_policy_not_attestable` - the message names the deployment's posture and what it CAN attest).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "transport_policy:write"
+            ]
+          }
+        ]
+      }
+    },
     "/v1/zones": {
       "get": {
         "tags": [
@@ -3315,6 +3450,28 @@
           }
         }
       },
+      "PutTransportPolicyRequest": {
+        "type": "object",
+        "description": "Request body for `PUT /v1/transport_policy`.",
+        "required": [
+          "min_posture"
+        ],
+        "properties": {
+          "min_posture": {
+            "type": "string",
+            "description": "The floor over the posture grades: `any` (no tenant-imposed\nconstraint), `hybrid` (at least hybrid post-quantum key\nexchange), or `cnsa-2.0` (Category 5, ML-KEM-1024).",
+            "example": "cnsa-2.0"
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`monitor` (default; record verdicts, publish violations,\nnever affect traffic) or `enforce` (refuse non-conforming\nconnections; requires the deployment to be able to ATTEST\nthe floor, else 422).",
+            "example": "monitor"
+          }
+        }
+      },
       "RegisterZoneRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/zones`.",
@@ -3560,6 +3717,40 @@
             "type": "string",
             "description": "ISO 8601 / RFC 3339 timestamp.",
             "example": "2026-04-22T14:18:42Z"
+          }
+        }
+      },
+      "TransportPolicyResponse": {
+        "type": "object",
+        "description": "The transport-policy document.",
+        "required": [
+          "min_posture",
+          "mode",
+          "attestable_here"
+        ],
+        "properties": {
+          "min_posture": {
+            "type": "string",
+            "description": "The tenant's floor: `any` / `hybrid` / `cnsa-2.0`.",
+            "example": "cnsa-2.0"
+          },
+          "mode": {
+            "type": "string",
+            "description": "`monitor` or `enforce`.",
+            "example": "monitor"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 timestamp of the last write, or null when the\ndocument has never been written (the default policy).",
+            "example": "2026-06-12T18:00:00Z"
+          },
+          "attestable_here": {
+            "type": "boolean",
+            "description": "Whether THIS deployment can prove connections meet the\nfloor (RFC-012 §2). When false, verdicts for this policy are\nrecorded as `unknowable` and `mode=enforce` would be refused.",
+            "example": true
           }
         }
       },

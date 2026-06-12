@@ -368,6 +368,32 @@ func (c *Client) OffboardZone(ctx context.Context, id, idemKey string) (*gwclien
 	return &out, nil
 }
 
+// ─── Transport-policy endpoints (RFC-012) ──────────────────────────
+//
+// A document singleton per tenant: GET fabricates the default
+// (any/monitor) when never written, PUT replaces. The gateway's D2
+// gate refuses `mode=enforce` with a floor the DEPLOYMENT cannot
+// attest (422 transport_policy_not_attestable, self-explaining
+// message) — the resource surfaces that verbatim as the apply
+// diagnostic, which is the honest UX: the fix is the floor, the
+// mode, or a different endpoint, never a retry.
+
+func (c *Client) GetTransportPolicy(ctx context.Context) (*gwclient.TransportPolicyResponse, error) {
+	var out gwclient.TransportPolicyResponse
+	if err := c.do(ctx, "GET", "/v1/transport_policy", nil, &out, ""); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) PutTransportPolicy(ctx context.Context, req gwclient.PutTransportPolicyRequest, idemKey string) (*gwclient.TransportPolicyResponse, error) {
+	var out gwclient.TransportPolicyResponse
+	if err := c.do(ctx, "PUT", "/v1/transport_policy", req, &out, idemKey); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // FindAPIKeyByID paginates the list endpoint until it finds a matching
 // id. Returns nil (no error) if the key isn't found — the caller maps
 // that to "removed externally, drop from state." This is the workaround

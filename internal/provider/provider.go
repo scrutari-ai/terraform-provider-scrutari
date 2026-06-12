@@ -121,6 +121,10 @@ func (p *ScrutariProvider) Resources(_ context.Context) []func() resource.Resour
 		// lunch" story.
 		NewDomainResource,
 		NewDelegatedZoneResource,
+		// RFC-012 S5c: the cryptographic control plane — pin the
+		// tenant's transport-posture floor (monitor or enforce)
+		// from the same configuration that owns the zone.
+		NewTransportPolicyResource,
 	}
 }
 

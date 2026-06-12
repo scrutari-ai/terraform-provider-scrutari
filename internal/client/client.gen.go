@@ -621,6 +621,20 @@ type PageTenantResponse struct {
 	NextCursor *string          `json:"next_cursor"`
 }
 
+// PutTransportPolicyRequest Request body for `PUT /v1/transport_policy`.
+type PutTransportPolicyRequest struct {
+	// MinPosture The floor over the posture grades: `any` (no tenant-imposed
+	// constraint), `hybrid` (at least hybrid post-quantum key
+	// exchange), or `cnsa-2.0` (Category 5, ML-KEM-1024).
+	MinPosture string `json:"min_posture"`
+
+	// Mode `monitor` (default; record verdicts, publish violations,
+	// never affect traffic) or `enforce` (refuse non-conforming
+	// connections; requires the deployment to be able to ATTEST
+	// the floor, else 422).
+	Mode *string `json:"mode"`
+}
+
 // RegisterZoneRequest Request body for `POST /v1/zones`.
 type RegisterZoneRequest struct {
 	// DelegationMode `ns` (primary, default) or `cname_pair` (fallback).
@@ -819,6 +833,24 @@ type TenantResponse struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+// TransportPolicyResponse The transport-policy document.
+type TransportPolicyResponse struct {
+	// AttestableHere Whether THIS deployment can prove connections meet the
+	// floor (RFC-012 §2). When false, verdicts for this policy are
+	// recorded as `unknowable` and `mode=enforce` would be refused.
+	AttestableHere bool `json:"attestable_here"`
+
+	// MinPosture The tenant's floor: `any` / `hybrid` / `cnsa-2.0`.
+	MinPosture string `json:"min_posture"`
+
+	// Mode `monitor` or `enforce`.
+	Mode string `json:"mode"`
+
+	// UpdatedAt RFC 3339 timestamp of the last write, or null when the
+	// document has never been written (the default policy).
+	UpdatedAt *string `json:"updated_at"`
+}
+
 // UpdateRouteRequest Request body for `PATCH /v1/routes/{id}`. Every field is
 // `Option`; omitted = unchanged. `host` and `tenant_id` are
 // intentionally NOT patchable — re-homing a route to a new host
@@ -969,6 +1001,9 @@ type CreateRouteJSONRequestBody = CreateRouteRequest
 
 // UpdateRouteJSONRequestBody defines body for UpdateRoute for application/json ContentType.
 type UpdateRouteJSONRequestBody = UpdateRouteRequest
+
+// PutTransportPolicyJSONRequestBody defines body for PutTransportPolicy for application/json ContentType.
+type PutTransportPolicyJSONRequestBody = PutTransportPolicyRequest
 
 // RegisterZoneJSONRequestBody defines body for RegisterZone for application/json ContentType.
 type RegisterZoneJSONRequestBody = RegisterZoneRequest
