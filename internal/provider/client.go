@@ -300,6 +300,74 @@ func (c *Client) RevokeAPIKey(ctx context.Context, id, idemKey string) error {
 	return c.do(ctx, "DELETE", fmt.Sprintf("/v1/api_keys/%s", id), nil, &out, idemKey)
 }
 
+// ─── Domain endpoints (RFC-010 S3/S1c) ─────────────────────────────
+//
+// Same hybrid posture as routes: hand-rolled HTTP plumbing +
+// generated DTOs. Two response shapes by design, mirroring the
+// gateway: `CreatedDomainResponse` (POST only) carries
+// `expected_value` exactly once — the TXT challenge the caller must
+// publish for classic creates, null for zone-backed creates — while
+// `DomainResponse` (GET) never carries the secret. The resource layer
+// preserves the create-time secret in Terraform state (marked
+// Sensitive) precisely because it can never be re-read.
+
+func (c *Client) CreateDomain(ctx context.Context, req gwclient.CreateDomainRequest, idemKey string) (*gwclient.CreatedDomainResponse, error) {
+	var out gwclient.CreatedDomainResponse
+	if err := c.do(ctx, "POST", "/v1/domains", req, &out, idemKey); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) GetDomain(ctx context.Context, id int64) (*gwclient.DomainResponse, error) {
+	var out gwclient.DomainResponse
+	if err := c.do(ctx, "GET", fmt.Sprintf("/v1/domains/%d", id), nil, &out, ""); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteDomain cascades server-side: every route on the same
+// hostname is destroyed in the same transaction (the gateway refuses
+// to leave orphaned routes squatting on the global host index).
+func (c *Client) DeleteDomain(ctx context.Context, id int64, idemKey string) error {
+	return c.do(ctx, "DELETE", fmt.Sprintf("/v1/domains/%d", id), nil, nil, idemKey)
+}
+
+// ─── Delegated-zone endpoints (RFC-010 S1) ─────────────────────────
+//
+// `zones:write` is the gateway's crown-jewel scope: one successful
+// POST plus a customer DNS change controls every hostname under the
+// zone forever. The provider exposes it faithfully; pipeline-scoping
+// guidance lives in the resource's MarkdownDescription. OffboardZone
+// returns the gateway's 202 envelope — offboarding is a server-side
+// drain, not an instant delete; see the zone resource's Delete for
+// how that maps onto Terraform destroy semantics.
+
+func (c *Client) RegisterZone(ctx context.Context, req gwclient.RegisterZoneRequest, idemKey string) (*gwclient.RegisteredZoneResponse, error) {
+	var out gwclient.RegisteredZoneResponse
+	if err := c.do(ctx, "POST", "/v1/zones", req, &out, idemKey); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) GetZone(ctx context.Context, id string) (*gwclient.ZoneResponse, error) {
+	var out gwclient.ZoneResponse
+	if err := c.do(ctx, "GET", "/v1/zones/"+id, nil, &out, ""); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) OffboardZone(ctx context.Context, id, idemKey string) (*gwclient.ZoneOffboardResponse, error) {
+	var out gwclient.ZoneOffboardResponse
+	if err := c.do(ctx, "DELETE", "/v1/zones/"+id, nil, &out, idemKey); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // FindAPIKeyByID paginates the list endpoint until it finds a matching
 // id. Returns nil (no error) if the key isn't found — the caller maps
 // that to "removed externally, drop from state." This is the workaround

@@ -5,7 +5,7 @@
     "description": "Programmatic interface for managing routes, tenants, domains, members, and API keys.\n\nAuthentication is via API keys minted from the dashboard or via the admin CLI; pass them as `Authorization: Bearer <key>`.\n\nEvery non-2xx response returns the same `ApiError` envelope (see `components/schemas/ApiError`). List endpoints return a `Page<T>` envelope with `data`, `has_more`, and an optional `next_cursor`.\n\nThis is an alpha-tagged spec. The shape is stable, but new endpoints will land additively as more `/v1/*` surfaces gain `#[utoipa::path]` annotations.",
     "contact": {
       "name": "Scrutari API Support",
-      "email": "support@scrutari.ai"
+      "email": "partnerships@scrutari.ai"
     },
     "license": {
       "name": "Proprietary"
@@ -47,11 +47,21 @@
               "minimum": 0
             },
             "example": 20
+          },
+          {
+            "name": "auto_managed",
+            "in": "query",
+            "description": "Row-class filter. Omit (or set false) for user-managed keys — the customer-facing default. Set true to retrieve system-minted plumbing rows (e.g. live-trace SSE proxy session keys). The two views are disjoint; there is no combined-results mode.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "example": false
           }
         ],
         "responses": {
           "200": {
-            "description": "Paginated list of active API keys for the authenticated tenant. Revoked keys are filtered out.",
+            "description": "Paginated list of active API keys for the authenticated tenant. Revoked keys are filtered out. Returns user-managed (`auto_managed = false`) rows by default; pass `?auto_managed=true` to retrieve system-minted plumbing keys instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -189,6 +199,84 @@
       }
     },
     "/v1/api_keys/{id}": {
+      "get": {
+        "tags": [
+          "api_keys"
+        ],
+        "summary": "Read one API key by id (masked: hint only, never the plaintext or\nhash). Returns revoked and expired rows too — a Terraform import\nmust see the key's true state; only the auth path filters them.\n404 collapses \"no such id\" and \"not your key\" into one.",
+        "operationId": "get_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "API key identifier from a previous create or list response.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "key_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The API key's masked metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `api_keys:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No key with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "api_keys:read"
+            ]
+          }
+        ]
+      },
       "delete": {
         "tags": [
           "api_keys"
@@ -274,6 +362,374 @@
           {
             "api_key": [
               "api_keys:write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "summary": "Create a chat completion (OpenAI-compatible).",
+        "description": "OpenAI-style Chat Completions, text-only. Returns a JSON\n`chat.completion` by default, or an SSE `text/event-stream` of\n`chat.completion.chunk` frames when the request sets `stream: true`.",
+        "operationId": "create_chat_completion",
+        "requestBody": {
+          "description": "OpenAI-style Chat Completions request. Text content only (tools and multimodal parts are not yet supported and are rejected with 422). Set `stream: true` to receive an SSE `text/event-stream` of `chat.completion.chunk` frames terminated by `data: [DONE]`.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatCompletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A `chat.completion` object (JSON), or when `stream: true` a `text/event-stream` of `chat.completion.chunk` frames closed by `data: [DONE]`."
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `inference:invoke` scope, or no upstream provider credential is configured for the resolved model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested `model` is not configured in this tenant's catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request body, an unsupported message role, or PHI/PII detected in the prompt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The tenant's monthly token quota is exhausted, or the upstream provider rate-limited the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The model catalog, quota backend, credential store, or upstream provider is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "inference:invoke"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/domain_jobs": {
+      "post": {
+        "tags": [
+          "domain_jobs"
+        ],
+        "summary": "`POST /v1/domain_jobs`: enqueue a bulk create/delete job. Returns\n`202 Accepted` with the job handle; per-item results arrive via the\nitems endpoint as the worker lands them (D3: no 207 enqueue).",
+        "operationId": "enqueue_domain_job",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnqueueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted. Poll the job endpoint for status and the items endpoint for per-item results (bulk is async-only; there is no 207 enqueue).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `domains:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Too many non-terminal jobs for this tenant, or a concurrent request with the same Idempotency-Key is mid-flight.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid op, item count out of 1..=1000, invalid hostname, zone_id not yet supported, or the job would breach the plan's domain cap.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Dedicated domain-jobs rate bucket exceeded (DOMAIN_JOBS_PER_KEY_RPS)."
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "domains:write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/domain_jobs/{id}": {
+      "get": {
+        "tags": [
+          "domain_jobs"
+        ],
+        "summary": "`GET /v1/domain_jobs/{id}`: status + counts. 404 collapses \"does\nnot exist\" and \"belongs to another tenant\", the same anti-disclosure\nposture as `GET /v1/domains/{id}`.",
+        "operationId": "get_domain_job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Job id (UUID) from the enqueue response.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f8a3a1e-9d2b-4c1f-8a55-0123456789ab"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status and per-item counts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainJobResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `domains:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No job with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` is not a UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "domains:read"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/domain_jobs/{id}/items": {
+      "get": {
+        "tags": [
+          "domain_jobs"
+        ],
+        "summary": "`GET /v1/domain_jobs/{id}/items`: per-item results, keyset-paginated\non `(job_id, seq)`. An unknown / foreign job id yields an empty\nterminal page rather than a 404: the items query is tenant-scoped\nthrough the parent join, so the two cases are indistinguishable by\nconstruction (same anti-disclosure posture as the 404 above; the\ncaller who wants existence asks the job endpoint).",
+        "operationId": "list_domain_job_items",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Job id (UUID) from the enqueue response.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f8a3a1e-9d2b-4c1f-8a55-0123456789ab"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque pagination cursor from the previous response's `next_cursor`. Omit on the first page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "cur_AbcXYZ123"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (1..=100). Default 20.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of per-item results in seq order: `{ data: [DomainJobItemResponse], next_cursor: string|null }`. An unknown or foreign job id yields an empty terminal page."
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `domains:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid `limit`, malformed `cursor`, or non-UUID `id`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "domains:read"
             ]
           }
         ]
@@ -369,6 +825,103 @@
             ]
           }
         ]
+      },
+      "post": {
+        "tags": [
+          "domains"
+        ],
+        "summary": "Create (or re-issue) a TXT verification challenge for a domain in\nthe caller's tenant — the synchronous single-item create the\nTerraform provider's `scrutari_domain` resource needs (RFC-010 S3).\nBulk creates are async-job-only via `POST /v1/domain_jobs` (D3).",
+        "description": "The response carries `expected_value`, the TXT record to publish:\nshown ONCE, only to the creating `domains:write` caller, for a row\nborn `pending` (see `api_types::domains::CreatedDomainResponse` for\nthe threat-model note; list/read endpoints continue to omit the\nsecret). Re-POSTing an existing domain rotates the challenge and\nresets the row to `pending`, exactly like the dashboard flow.\n\nWith `zone_id` set (RFC-010 S1c), the hostname is created under\nthe caller's delegated zone instead: born `verified`, nothing to\npublish (`expected_value` is null), served by the zone's wildcard\ncert. Plan-cap admission is identical in both modes (D4: one\ndomain population, one cap).",
+        "operationId": "create_domain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDomainRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Challenge issued (or re-issued). Publish the TXT record at `challenge_host` with `expected_value`. For zone-backed creates (`zone_id` set) the row is born `verified` and `expected_value` is null — there is nothing to publish.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedDomainResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `domains:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`zone_id` does not name a delegated zone of the caller's tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The hostname is not available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Domain is not a valid FQDN, the plan's domain cap is reached, or (zone-backed) the zone is not active / the hostname is outside the zone's wildcard coverage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "domains:write"
+            ]
+          }
+        ]
       }
     },
     "/v1/domains/{id}": {
@@ -457,6 +1010,89 @@
           {
             "api_key": [
               "domains:read"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "domains"
+        ],
+        "summary": "Delete a domain verification, cascading to every route on the\nsame hostname for this tenant. Returns 204 No Content on success.",
+        "description": "**The deletion is destructive and irreversible.** Every route\nwhose `host` exactly matches the deleted domain's hostname is\ndeleted in the same transaction, with a `route.deleted` outbox\nevent (carrying `cascade_source: \"domain.deleted\"`) emitted for\neach. See `repo::domains::delete_domain_with_cascade_in_tx` for\nthe full transactional shape and rationale.\n\n# Why cascade is mandatory\n\nOrphaned routes left behind after a domain delete squat on the\nglobal `UNIQUE (host, path_prefix)` index in the `routes` table,\nblocking other tenants from later claiming the hostname even\nafter their own domain verification succeeds. This is a DoS\nvector on the hostname namespace; cascading on delete is the\nonly sound resolution.\n\n# In-memory route table staleness\n\nThis endpoint does NOT trigger an immediate refresh of the\ngateway's in-memory `RouteTable`. The 60-second background\nrefresh tick will pick up the change. During that window,\n`tenant_for_host` may return the deleted tenant for handshake\ntelemetry attribution. Same posture as `DELETE /v1/routes/{id}`.\nClosing this gap requires plumbing refresh notifications into\nthe control-plane state — tracked as a separate architectural\nconcern.",
+        "operationId": "delete_domain",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Domain verification identifier from a previous list response.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "example": 17
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Domain deleted; cascaded routes also deleted."
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `domains:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No domain with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` is not a positive integer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "domains:write"
             ]
           }
         ]
@@ -638,6 +1274,223 @@
           {
             "api_key": [
               "members:read"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "tags": [
+          "inference"
+        ],
+        "summary": "Create a message (Anthropic-compatible).",
+        "description": "Anthropic Messages shape, text content. Returns a JSON `message` by\ndefault, or an SSE `text/event-stream` of Anthropic Messages events\nwhen the request sets `stream: true`.\n\nRequest body (JSON): `model` (string), `max_tokens` (integer,\nrequired), and `messages` (a list of `{role, content}` where `role` is\n`user` or `assistant`). Optional: a top-level `system` prompt,\n`temperature`, and `stream`. `content` may be a plain string or an\narray of `{\"type\":\"text\",\"text\":\"...\"}` blocks (text only; tools and\nimages are not yet supported).",
+        "operationId": "create_message",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessagesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "An Anthropic `message` object (JSON), or when `stream: true` a `text/event-stream` of Messages events (`message_start` through `message_stop`)."
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `inference:invoke` scope, or no upstream provider credential is configured for the resolved model.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The requested `model` is not configured in this tenant's catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request body, an unsupported message role, or PHI/PII detected in the prompt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The tenant's monthly token quota is exhausted, or the upstream provider rate-limited the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The model catalog, quota backend, credential store, or upstream provider is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "inference:invoke"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": [
+          "inference"
+        ],
+        "summary": "List available models.",
+        "description": "The tenant's enabled public model names.",
+        "operationId": "list_models",
+        "responses": {
+          "200": {
+            "description": "The tenant's enabled public model names in an OpenAI-style `{object: \"list\", data: [{id, object, owned_by}]}` envelope."
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `inference:invoke` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The model catalog is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "inference:invoke"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/provider-credentials": {
+      "put": {
+        "tags": [
+          "provider_credentials"
+        ],
+        "summary": "Store or rotate a BYOK provider credential.",
+        "description": "Installs or rotates the caller tenant's key for one BYOK provider\n(`openai.direct` or `anthropic.direct`).",
+        "operationId": "store_provider_credential",
+        "requestBody": {
+          "description": "The BYOK provider id (`openai.direct` or `anthropic.direct`) and the plaintext upstream API key. The key is written to the gateway's key vault; only a last-4 hint is persisted. The tenant is taken from the authenticated API key, never the body.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The credential was stored. The response echoes the provider and a masked `key_hint`, never the key."
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `provider_credentials:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unsupported provider, or the `api_key` is missing or too short.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The credential store is not configured, or is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "provider_credentials:write"
             ]
           }
         ]
@@ -1235,6 +2088,342 @@
           }
         ]
       }
+    },
+    "/v1/zones": {
+      "get": {
+        "tags": [
+          "zones"
+        ],
+        "summary": "List the tenant's zones, newest first. Unpaginated by design:\nzones are a yearly-scale resource (a tenant holds a handful), and\nthe hard LIMIT below bounds the response either way.",
+        "operationId": "list_zones",
+        "responses": {
+          "200": {
+            "description": "The tenant's delegated zones, newest first (at most 100).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ZoneResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `zones:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "zones:read"
+            ]
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "zones"
+        ],
+        "summary": "Register a zone for delegation after the takeover-prevention\nadmission checks (syntax, the ancestor/descendant overlap walk\nagainst all tenants' zones and other tenants' hostnames, global\nadmission serialization).",
+        "operationId": "register_zone",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterZoneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Zone registered. Publish the TXT at `challenge_host` in the PARENT zone; the verify daemon then provisions name servers and the zone proceeds to `verifying_delegation` and `active`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisteredZoneResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `zones:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The zone equals, contains, or is contained by an existing zone or hostname (anti-disclosure: the conflicting row is never identified).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Zone failed validation (shape, label count, apex, or delegation_mode).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "zones:write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/zones/{id}": {
+      "get": {
+        "tags": [
+          "zones"
+        ],
+        "summary": "Read one zone by id. 404 collapses \"no such id\" and \"not your\nzone\" into one.",
+        "operationId": "get_zone",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Zone id (UUID) from the register or list response.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f8a3a1e-9d2b-4c1f-8a55-0123456789ab"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The zone.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `zones:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No zone with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` is not a UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "zones:read"
+            ]
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "zones"
+        ],
+        "summary": "Begin offboarding a delegated zone (RFC-010 S1d). This is a\nstate-machine transition, not a row delete: the zone flips to\n`offboarding` and the daemon's drain performs the §3.3 teardown —\nevery hostname row and its routes are cascade-deleted, the\n`*.<zone>` wildcard cert is revoked and its Key Vault bundle\nhard-purged, and the Scrutari-side Azure DNS zone is deleted\nONLY after the public NS records stop resolving to Scrutari\n(the takeover guard: a dangling delegation pointing at a deleted\nzone is hijackable; one pointing at a zone we still hold is not).\nThe terminal state is a `revoked` tombstone and the zone name\nstays quarantined (§6).",
+        "description": "Idempotent: re-DELETE of an `offboarding` zone returns 202 with\nthe current state. A `revoked` zone returns 409 — there is\nnothing left to offboard.",
+        "operationId": "offboard_zone",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Zone id (UUID) from the register or list response.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "3f8a3a1e-9d2b-4c1f-8a55-0123456789ab"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Offboarding started (or already in progress). The drain proceeds automatically; remove the zone's NS records from the parent zone — the Azure-side zone is deleted only after they stop resolving to Scrutari.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoneOffboardResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `zones:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No zone with this id exists for the authenticated tenant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The zone is already revoked; offboarding has completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Path parameter `id` is not a UUID.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "zones:write"
+            ]
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -1338,6 +2527,118 @@
             ],
             "description": "ISO 8601 / RFC 3339 timestamp of the most recent use.\n`null` for keys that have never been presented to the\nauth middleware. Updated asynchronously (the gateway\nbatches `last_used_at` writes to limit row contention on\nhot keys).",
             "example": "2026-04-22T14:18:42Z"
+          },
+          "auto_managed": {
+            "type": "boolean",
+            "description": "`true` for system-minted plumbing (today: the dashboard's\nlive-trace SSE proxy `trace-sess-*` keys), `false` for\nevery customer-managed key. Added in Task #291.\n\nFiltered out of the response by default; pass\n`?include_auto_managed=true` on the list endpoint to see\nthem. The dashboard's API Keys page renders an \"Auto\" badge\nwhen this is true so operators can visually distinguish\nsystem from user-managed keys in the \"System keys\" tab.\n\nAuto-managed keys do NOT count toward the tenant's plan\ncap; see `count_resource_usage` in the gateway.",
+            "example": false
+          }
+        }
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "description": "Inbound OpenAI Chat Completions request body.",
+        "required": [
+          "model",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Public model name; resolved against the per-tenant catalog."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "description": "Conversation messages in order."
+          },
+          "max_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Legacy output cap. OpenAI superseded this with\n`max_completion_tokens`; we accept either and prefer the newer.",
+            "minimum": 0
+          },
+          "max_completion_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Current output cap field.",
+            "minimum": 0
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Sampling temperature; forwarded as-is to the provider."
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Streaming flag. `true` switches the response to an SSE\n`text/event-stream` of `chat.completion.chunk` frames."
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "description": "One inbound message. `content` is a plain string in this commit;\nOpenAI also allows an array of content parts, which we reject for\nnow (see module docs).",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "`system` | `user` | `assistant` (others rejected)."
+          },
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Text body. Absent/null is treated as empty."
+          }
+        }
+      },
+      "Content": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "`\"content\": \"hello\"`."
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
+            "description": "`\"content\": [{ \"type\": \"text\", \"text\": \"hello\" }, ...]`."
+          }
+        ],
+        "description": "Anthropic content: a plain string or an array of typed blocks. Only\n`text` blocks contribute text in this commit."
+      },
+      "ContentBlock": {
+        "type": "object",
+        "description": "One inbound content block. Non-text blocks contribute no text.",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Block discriminator (`\"text\"`, `\"image\"`, ...)."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Text payload, present on `text` blocks."
           }
         }
       },
@@ -1368,6 +2669,28 @@
             ],
             "description": "Optional environment selector. `live` (default) issues a\nproduction key; `test` issues a sandbox key. Test keys\nroute to a separate environment with no real billing —\nsuitable for CI smoke tests and dev workflows.",
             "example": "live"
+          }
+        }
+      },
+      "CreateDomainRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/domains`.",
+        "required": [
+          "domain"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The fully-qualified domain to start verifying (bare hostname,\nno scheme, no port).",
+            "example": "api.acme.example"
+          },
+          "zone_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional delegated zone to create the hostname under\n(RFC-010 S1c). When set, the hostname must sit exactly one\nlabel under the zone (`<label>.<zone>` — that is what the\nzone's `*.<zone>` wildcard cert covers), the zone must be\n`active`, and the row is born `verified` with no challenge to\npublish. When omitted, the classic TXT-challenge flow applies.",
+            "example": "5f0e8a7b-9f2c-4f0e-8a7b-9f2c1f0e8a7b"
           }
         }
       },
@@ -1409,6 +2732,152 @@
             "type": "string",
             "description": "Authentication mode. One of `required` (default), `optional`,\n`passthrough`. Opening a route to anonymous traffic should\nalways be an explicit choice, hence the safe default.",
             "example": "required"
+          },
+          "route_kind": {
+            "type": "string",
+            "description": "AI provider discriminator. One of `passthrough` (default),\n`ai_openai`, `ai_anthropic`, `ai_bedrock`,\n`ai_azure_openai`, `ai_google`. Enabling an `ai_*` kind\nshould always be an explicit choice (it installs token-\nusage extraction on the response stream and writes a row to\n`ai_token_usage` per request), hence the safe default.",
+            "example": "passthrough"
+          }
+        }
+      },
+      "CreatedDomainResponse": {
+        "type": "object",
+        "description": "Response shape for `POST /v1/domains` ONLY: the just-created (or\nre-issued) verification challenge, INCLUDING the TXT value the\ncaller must publish.\n\n# Why this type may carry `expected_value` when [`DomainResponse`]\nmust not\n\nThe module-doc threat model is about READING another row's secret:\na `domains:read` key harvesting the expected TXT value of a domain\nit does not control and replaying it. This type is different on\nevery axis that matters: it is returned exactly once, to the\n`domains:write` caller who CREATED the row in their own tenant,\nfor a row born `pending` that proves nothing yet. Without the\nvalue on the create response, API-driven verification (RFC-010\nS3: Terraform publishing the TXT record) is impossible and every\ncaller would be forced back through the dashboard. The list/read\nendpoints continue to omit the secret; re-reading it later is\nstill not possible over the API.\n\nZone-backed creates (RFC-010 S1c: request carried a `zone_id`)\nhave no challenge at all — the row is born `verified` because\nScrutari operates the zone's DNS — so `expected_value` is null\nand `delegated_zone_id` is set.",
+        "required": [
+          "id",
+          "tenant_id",
+          "domain",
+          "verification_type",
+          "challenge_host",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Auto-assigned verification identifier.",
+            "example": 17
+          },
+          "tenant_id": {
+            "type": "string",
+            "description": "Owning tenant, derived from the authenticated key.",
+            "example": "tnt_01k4r9j7y8x2v3m6q1w5z9b7n2"
+          },
+          "domain": {
+            "type": "string",
+            "description": "The domain the challenge was issued for (case-folded).",
+            "example": "api.acme.example"
+          },
+          "verification_type": {
+            "type": "string",
+            "description": "Verification method; `txt` for API-created rows.",
+            "example": "txt"
+          },
+          "challenge_host": {
+            "type": "string",
+            "description": "DNS name the TXT record must be published at.",
+            "example": "_scrutari-challenge.api.acme.example"
+          },
+          "expected_value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact TXT record value to publish. Shown only on this\nresponse; treat it like a credential and publish it promptly.\n`null` for zone-backed creates (RFC-010 S1c): a hostname under\na delegated zone has nothing to publish and nothing to prove —\nthe row is born `verified`.",
+            "example": "scrutari-verify=9f2c1f0e8a7b"
+          },
+          "status": {
+            "type": "string",
+            "description": "Row status. `pending` for classic creates (re-issuing a\nchallenge for an existing domain also resets it to `pending`);\n`verified` for zone-backed creates, by construction.",
+            "example": "pending"
+          },
+          "delegated_zone_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The delegated zone this hostname was created under, or `null`\nfor classic per-domain creates (RFC-010 S1c, D4).",
+            "example": "5f0e8a7b-9f2c-4f0e-8a7b-9f2c1f0e8a7b"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 / RFC 3339 creation timestamp.",
+            "example": "2026-01-15T09:30:00Z"
+          }
+        }
+      },
+      "DomainJobItemResponse": {
+        "type": "object",
+        "description": "Wire shape of one item row.",
+        "required": [
+          "seq",
+          "hostname",
+          "status"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DomainJobResponse": {
+        "type": "object",
+        "description": "Wire shape of a job (status + counts; RFC-010 section 4.1).",
+        "required": [
+          "id",
+          "op",
+          "status",
+          "total_items",
+          "succeeded",
+          "failed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "total_items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -1498,6 +2967,38 @@
           }
         }
       },
+      "EnqueueRequest": {
+        "type": "object",
+        "required": [
+          "op",
+          "items"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "description": "`create` or `delete`.",
+            "example": "create"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "1..=1000 bare hostnames, processed in order. In-batch\nduplicates land as `skipped` items.",
+            "example": [
+              "api.acme.example",
+              "edge.acme.example"
+            ]
+          },
+          "zone_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC-010 section 4.1 reserves `zone_id` for zone-backed bulk\ncreates. Accepted in the wire shape for forward compatibility,\nrejected with a clear message until the S1 delegated-zone\nsurface exists."
+          }
+        }
+      },
       "ErrorType": {
         "type": "string",
         "description": "Coarse error categorization. Stable enum: variants will not be\nremoved within a major version. Clients switch on this for retry\nand surfacing logic.\n\nHTTP status code mapping is fixed and exposed via\n[`ErrorType::status_code`] (returns a `u16` to avoid pulling axum\nor http types into the no-default-features dep graph).",
@@ -1511,6 +3012,24 @@
           "api_error",
           "service_unavailable_error"
         ]
+      },
+      "InboundMessage": {
+        "type": "object",
+        "description": "One inbound message.",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "`user` | `assistant`."
+          },
+          "content": {
+            "$ref": "#/components/schemas/Content",
+            "description": "A plain string or an array of content blocks."
+          }
+        }
       },
       "IssuedApiKeyResponse": {
         "type": "object",
@@ -1617,6 +3136,57 @@
             "type": "string",
             "description": "ISO 8601 / RFC 3339 timestamp of the most recent change\nto this row (role change, display-name update, etc.).",
             "example": "2026-04-22T14:18:42Z"
+          }
+        }
+      },
+      "MessagesRequest": {
+        "type": "object",
+        "description": "Inbound Anthropic Messages request body.",
+        "required": [
+          "model",
+          "max_tokens",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Public model name; resolved against the per-tenant catalog."
+          },
+          "max_tokens": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Output cap. Anthropic mandates `max_tokens`, so it is required\nhere too (serde rejects a body without it).",
+            "minimum": 0
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InboundMessage"
+            },
+            "description": "Conversation turns. Anthropic uses only `user` / `assistant`\nroles; the system prompt is the top-level `system` field."
+          },
+          "system": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Content",
+                "description": "Optional top-level system prompt (string or text blocks)."
+              }
+            ]
+          },
+          "temperature": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Sampling temperature, forwarded as-is to the provider."
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Streaming flag. `true` switches the response to an SSE\n`text/event-stream` of Anthropic Messages events."
           }
         }
       },
@@ -1745,6 +3315,73 @@
           }
         }
       },
+      "RegisterZoneRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/zones`.",
+        "required": [
+          "zone"
+        ],
+        "properties": {
+          "zone": {
+            "type": "string",
+            "description": "The zone to delegate, e.g. `ai.bigcorp.com` (at least three\nlabels; apex delegation is not supported).",
+            "example": "ai.bigcorp.com"
+          },
+          "delegation_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ns` (primary, default) or `cname_pair` (fallback).",
+            "example": "ns"
+          }
+        }
+      },
+      "RegisteredZoneResponse": {
+        "type": "object",
+        "description": "`POST /v1/zones` response: the registration plus the one-time\nparent-zone TXT challenge. The token appears ONLY here.",
+        "required": [
+          "id",
+          "zone",
+          "delegation_mode",
+          "status",
+          "challenge_host",
+          "expected_txt",
+          "next_steps"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "3f8a3a1e-9d2b-4c1f-8a55-0123456789ab"
+          },
+          "zone": {
+            "type": "string",
+            "example": "ai.bigcorp.com"
+          },
+          "delegation_mode": {
+            "type": "string",
+            "example": "ns"
+          },
+          "status": {
+            "type": "string",
+            "example": "pending_verification"
+          },
+          "challenge_host": {
+            "type": "string",
+            "description": "DNS name to publish the proof TXT at, in the PARENT zone (the\ndelegation is not live yet, so the record resolves via the\nparent).",
+            "example": "_scrutari-zone-challenge.ai.bigcorp.com"
+          },
+          "expected_txt": {
+            "type": "string",
+            "description": "The exact TXT value to publish. Shown once; treat it like a\ncredential.",
+            "example": "scrutari-zone-verify=9f2c1f0e8a7b"
+          },
+          "next_steps": {
+            "type": "string",
+            "description": "What happens next, in prose, so an API-only integration can\nsurface accurate instructions without reading our docs."
+          }
+        }
+      },
       "RevokeApiKeyResponse": {
         "type": "object",
         "description": "`DELETE /v1/api_keys/{id}` response. Returned with 200 OK on\nsuccessful revocation. The key row stays in storage (marked\n`revoked_at`) so auth-failure audit logs still resolve\n`api_key_id` to a human-readable label after revocation;\n\"delete\" at the API level is \"revoke\" at the data model.",
@@ -1778,6 +3415,7 @@
           "preserve_host_header",
           "is_active",
           "auth_mode",
+          "route_kind",
           "created_at",
           "updated_at"
         ],
@@ -1828,6 +3466,11 @@
             "description": "Authentication mode for traffic on this route:\n\n  - `required` — every request must present a valid API key\n    (or other configured auth). Default; safest posture.\n  - `optional` — auth is checked when present (and forwarded\n    to the upstream via X-Scrutari-* headers) but missing\n    auth doesn't reject. Use for routes that need to serve\n    anonymous and authenticated traffic with the same\n    handler.\n  - `passthrough` — auth is not checked at all. Use for\n    truly public surfaces (marketing pages, health checks).",
             "example": "required"
           },
+          "route_kind": {
+            "type": "string",
+            "description": "AI provider discriminator. Determines whether the gateway\nruns token-usage extraction on the response stream for this\nroute's traffic (AI Gateway Slice A). Values:\n\n  - `passthrough` — default. No envelope parsing, no token\n    accounting. Byte-identical to pre-Slice-A behaviour.\n    Every existing route in the table is on this value.\n  - `ai_openai`: upstream speaks OpenAI Chat Completions\n    or Responses. Gateway extracts `usage.prompt_tokens`\n    and `usage.completion_tokens` per request.\n  - `ai_anthropic`: upstream speaks Anthropic Messages.\n    Gateway extracts `usage.input_tokens` and\n    `usage.output_tokens`.\n  - `ai_bedrock` | `ai_azure_openai` | `ai_google`:\n    reserved; Slice A treats these as `passthrough`-\n    equivalent (the value persists for forward compatibility\n    but no extraction runs yet).\n\nToken-usage rows land in `ai_token_usage` for `ai_*` routes.\nSurfaced on per-route dashboards from Slice C onwards.",
+            "example": "passthrough"
+          },
           "created_at": {
             "type": "string",
             "description": "Route creation timestamp. RFC 3339 / ISO 8601.",
@@ -1837,6 +3480,24 @@
             "type": "string",
             "description": "Last-modified timestamp. Updated on every PATCH that changes\nany field. RFC 3339 / ISO 8601.",
             "example": "2026-04-22T14:18:42Z"
+          }
+        }
+      },
+      "StoreCredentialRequest": {
+        "type": "object",
+        "description": "Inbound body for the credential write.",
+        "required": [
+          "provider",
+          "api_key"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "BYOK provider id: `openai.direct` or `anthropic.direct`."
+          },
+          "api_key": {
+            "type": "string",
+            "description": "The plaintext upstream key. Request-only; never echoed or logged."
           }
         }
       },
@@ -1944,6 +3605,14 @@
             "description": "Change `auth_mode`. Must be `required` / `optional` /\n`passthrough`. Lowering from `required` to `optional` or\n`passthrough` opens a previously-authenticated route to\nanonymous traffic — review carefully.",
             "example": "required"
           },
+          "route_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Change `route_kind`. Must be one of `passthrough`,\n`ai_openai`, `ai_anthropic`, `ai_bedrock`,\n`ai_azure_openai`, `ai_google`. Flipping a route from\n`passthrough` to any `ai_*` kind starts token-usage\nextraction on the response stream and per-request rows in\n`ai_token_usage`. Flipping back to `passthrough` stops\nboth. Audit severity bumps to `warn` on any change (Slice\nA audit posture for the regulated-infra wedge).",
+            "example": "ai_openai"
+          },
           "is_active": {
             "type": [
               "boolean",
@@ -1951,6 +3620,92 @@
             ],
             "description": "Administrative enable/disable. When false, the route stays\nin the routing table but returns 503 for matching requests.\nUse for cut-without-delete during incident response.",
             "example": true
+          }
+        }
+      },
+      "ZoneOffboardResponse": {
+        "type": "object",
+        "description": "`DELETE /v1/zones/{id}` response: the drain has been started (or\nwas already running). 202, never 204 — offboarding is a process,\nnot an instant, and the body tells the caller what they still owe.",
+        "required": [
+          "id",
+          "zone",
+          "status",
+          "next_steps"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "3f8a3a1e-9d2b-4c1f-8a55-0123456789ab"
+          },
+          "zone": {
+            "type": "string",
+            "example": "ai.bigcorp.com"
+          },
+          "status": {
+            "type": "string",
+            "example": "offboarding"
+          },
+          "next_steps": {
+            "type": "string",
+            "description": "What happens next, in prose — including the one step only the\ncustomer can perform (removing their NS records), which gates\nthe final Azure-zone deletion."
+          }
+        }
+      },
+      "ZoneResponse": {
+        "type": "object",
+        "description": "Read shape for one zone. No verification token, ever; the\nname-server set is empty until the parent proof verifies and the\nchild zone is provisioned.",
+        "required": [
+          "id",
+          "zone",
+          "delegation_mode",
+          "status",
+          "name_servers"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "3f8a3a1e-9d2b-4c1f-8a55-0123456789ab"
+          },
+          "zone": {
+            "type": "string",
+            "example": "ai.bigcorp.com"
+          },
+          "delegation_mode": {
+            "type": "string",
+            "example": "ns"
+          },
+          "status": {
+            "type": "string",
+            "example": "active"
+          },
+          "name_servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The NS records to publish in the parent zone, once issued.",
+            "example": [
+              "ns1-01.azure-dns.com",
+              "ns2-01.azure-dns.net"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "activated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_delegation_check_at": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }
@@ -1987,6 +3742,14 @@
     {
       "name": "traces",
       "description": "Live request/handshake trace stream. The single endpoint here (`GET /v1/traces/stream`) returns a long-lived `text/event-stream` of events as the gateway processes them. Designed for dashboard observability surfaces; programmatic consumers should use `EventSource` (browser) or an equivalent SSE library and implement reconnect-with-`Last-Event-ID` for gap-free resume across network blips. The data payload shape is documented in prose on the endpoint (not yet a typed OpenAPI schema — followup #230)."
+    },
+    {
+      "name": "inference",
+      "description": "Unified inference API (RFC-003). OpenAI-compatible `POST /v1/chat/completions`, Anthropic-compatible `POST /v1/messages`, and `GET /v1/models`. Every call requires the `inference:invoke` scope, runs through per-tenant token quotas and PHI/PII redaction, and dispatches to the model bound in the tenant's catalog (a platform route, or a direct vendor route on the tenant's own BYOK key)."
+    },
+    {
+      "name": "provider_credentials",
+      "description": "Bring-your-own-key (BYOK) credential management. `PUT /v1/provider-credentials` installs or rotates the tenant's own upstream provider key (`openai.direct` or `anthropic.direct`), gated by the `provider_credentials:write` scope. The plaintext key is stored in the gateway's key vault; reads return only a masked hint."
     }
   ]
 }

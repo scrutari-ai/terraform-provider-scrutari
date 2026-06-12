@@ -114,6 +114,13 @@ func (p *ScrutariProvider) Resources(_ context.Context) []func() resource.Resour
 	return []func() resource.Resource{
 		NewRouteResource,
 		NewAPIKeyResource,
+		// RFC-010 S4: the enterprise control-plane pair. A zone is
+		// delegated once (scrutari_delegated_zone), then hostnames
+		// under it are pure Terraform (scrutari_domain with zone_id)
+		// — the "delegate in the morning, apply 500 hostnames before
+		// lunch" story.
+		NewDomainResource,
+		NewDelegatedZoneResource,
 	}
 }
 

@@ -143,18 +143,33 @@ fetch-spec:
 # The jq filter intentionally lives on a single line. Multi-line
 # filters with backslash-continuation get parsed by Make in ways
 # that break jq's lexer (the backslashes survive into the filter
-# source). One-line is uglier to read but provably works; the
-# walk() body is short enough that compactness wins. Reading
-# guide: walk every node, and for any object whose `.type` is
-# exactly a two-element array containing "null", rewrite it to
-# the 3.0-equivalent `{ type: "<non-null>", nullable: true }`.
-# Three-or-more-element type arrays (union types — utoipa doesn't
-# emit them today) are left untouched and would fail at codegen
-# time if they ever appeared, which is the correct loud failure.
+# source). One-line is uglier to read but provably works. Reading
+# guide — walk every node and apply TWO rewrites:
+#
+#   1. An object whose `.type` is exactly a two-element array
+#      containing "null" becomes the 3.0 form
+#      `{ type: "<non-null>", nullable: true }`.
+#      Three-or-more-element type arrays (union types — utoipa
+#      doesn't emit them today) are left untouched and would fail
+#      at codegen time if they ever appeared, the correct loud
+#      failure.
+#   2. An object whose `.oneOf` contains a `{"type": "null"}`
+#      branch (utoipa's 3.1 encoding for `Option<T>` where T is a
+#      $ref — refs can't carry inline nullability, so the null
+#      rides as a oneOf sibling; first seen on
+#      `MessagesRequest.system`) gets the null branch(es) removed
+#      and `nullable: true` set. When exactly ONE branch remains it
+#      collapses to the canonical 3.0 nullable-ref idiom
+#      `{ nullable: true, allOf: [<branch>] }` (a bare $ref with a
+#      `nullable` sibling would be IGNORED per the 3.0 spec — the
+#      allOf wrapper is what makes the nullability stick, and
+#      oapi-codegen renders it as a pointer field). With two or
+#      more remaining branches the oneOf stays a oneOf, just
+#      without the null arm.
 compat-spec: $(SPEC_PATH)
 	@command -v jq >/dev/null || ( echo "✗ jq not found — install via 'brew install jq' (macOS) or 'apt install jq' (Debian/Ubuntu)"; exit 1 )
-	@echo "→ Downcasting OpenAPI 3.1 nullable arrays in $(SPEC_PATH) → $(COMPAT_SPEC_PATH)"
-	@jq '.openapi = "3.0.3" | walk(if type == "object" and (.type | type) == "array" and (.type | length) == 2 and (.type | index("null")) != null then (.type | map(select(. != "null"))) as $$nn | .type = $$nn[0] | .nullable = true else . end)' $(SPEC_PATH) > $(COMPAT_SPEC_PATH)
+	@echo "→ Downcasting OpenAPI 3.1 nullable forms in $(SPEC_PATH) → $(COMPAT_SPEC_PATH)"
+	@jq '.openapi = "3.0.3" | walk(if type == "object" and (.type | type) == "array" and (.type | length) == 2 and (.type | index("null")) != null then (.type | map(select(. != "null"))) as $$nn | .type = $$nn[0] | .nullable = true elif type == "object" and (.oneOf | type) == "array" and ([.oneOf[] | select(type == "object" and (.type == "null" or .type == ["null"]))] | length) > 0 then ([.oneOf[] | select((type == "object" and (.type == "null" or .type == ["null"])) | not)]) as $$nn | (if ($$nn | length) == 1 then (del(.oneOf) | .allOf = $$nn | .nullable = true) else (.oneOf = $$nn | .nullable = true) end) else . end)' $(SPEC_PATH) > $(COMPAT_SPEC_PATH)
 	@echo "✓ 3.0-compat spec written to $(COMPAT_SPEC_PATH)"
 
 # Regenerate the client from the COMPAT spec (the 3.0-downcast
