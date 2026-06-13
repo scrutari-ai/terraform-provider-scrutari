@@ -1423,6 +1423,140 @@
         ]
       }
     },
+    "/v1/pii_policy": {
+      "get": {
+        "tags": [
+          "pii_policy"
+        ],
+        "summary": "Read the tenant's PII policy. The document conceptually always\nexists: a tenant that never configured one reads all-audit, with\n`updated_at` null.",
+        "operationId": "get_pii_policy",
+        "responses": {
+          "200": {
+            "description": "The tenant's PII-policy document (all-audit when never written).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiiPolicyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `pii_policy:read` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "pii_policy:read"
+            ]
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "pii_policy"
+        ],
+        "summary": "Replace the tenant's PII policy. The body is the complete desired\nstate (any category not listed reverts to `audit`). The write is\ndurable immediately, and the shared policy cache is invalidated so\nthe new policy takes effect on the AI path at once.",
+        "operationId": "put_pii_policy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutPiiPolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Policy replaced. Effective immediately on every AI-path scan (the shared cache is invalidated).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PiiPolicyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, malformed, or revoked API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the `pii_policy:write` scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown category, unknown mode, or a duplicate category.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "api_key": [
+              "pii_policy:write"
+            ]
+          }
+        ]
+      }
+    },
     "/v1/provider-credentials": {
       "put": {
         "tags": [
@@ -3447,6 +3581,66 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PiiPolicyResponse": {
+        "type": "object",
+        "description": "The PII-policy document.",
+        "required": [
+          "policies"
+        ],
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PiiPolicyRule"
+            },
+            "description": "All eight categories in catalog order, with audit-default fill."
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 timestamp of the last write, or null when the document\nis the all-audit default (never written).",
+            "example": "2026-06-13T18:00:00Z"
+          }
+        }
+      },
+      "PiiPolicyRule": {
+        "type": "object",
+        "description": "One `(category, mode)` rule on the wire.",
+        "required": [
+          "category",
+          "mode"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "One of: `ssn`, `us_phone`, `email`, `credit_card`, `mrn`, `npi`,\n`icd10`, `dob`.",
+            "example": "ssn"
+          },
+          "mode": {
+            "type": "string",
+            "description": "`audit` (detect and log, forward untouched), `redact` (replace\nmatched spans), or `block` (refuse the request with 422).",
+            "example": "redact"
+          }
+        }
+      },
+      "PutPiiPolicyRequest": {
+        "type": "object",
+        "description": "Request body for `PUT /v1/pii_policy`. REPLACE semantics: the\ncomplete desired policy. Categories omitted (or set to `audit`)\nrevert to the audit default.",
+        "required": [
+          "policies"
+        ],
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PiiPolicyRule"
+            },
+            "description": "The desired non-default rules. Any of the eight categories not\nlisted (or listed as `audit`) reverts to the audit default."
           }
         }
       },

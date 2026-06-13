@@ -394,6 +394,22 @@ func (c *Client) PutTransportPolicy(ctx context.Context, req gwclient.PutTranspo
 	return &out, nil
 }
 
+func (c *Client) GetPiiPolicy(ctx context.Context) (*gwclient.PiiPolicyResponse, error) {
+	var out gwclient.PiiPolicyResponse
+	if err := c.do(ctx, "GET", "/v1/pii_policy", nil, &out, ""); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) PutPiiPolicy(ctx context.Context, req gwclient.PutPiiPolicyRequest, idemKey string) (*gwclient.PiiPolicyResponse, error) {
+	var out gwclient.PiiPolicyResponse
+	if err := c.do(ctx, "PUT", "/v1/pii_policy", req, &out, idemKey); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // FindAPIKeyByID paginates the list endpoint until it finds a matching
 // id. Returns nil (no error) if the key isn't found — the caller maps
 // that to "removed externally, drop from state." This is the workaround

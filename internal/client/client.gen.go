@@ -621,6 +621,36 @@ type PageTenantResponse struct {
 	NextCursor *string          `json:"next_cursor"`
 }
 
+// PiiPolicyResponse The PII-policy document.
+type PiiPolicyResponse struct {
+	// Policies All eight categories in catalog order, with audit-default fill.
+	Policies []PiiPolicyRule `json:"policies"`
+
+	// UpdatedAt RFC 3339 timestamp of the last write, or null when the document
+	// is the all-audit default (never written).
+	UpdatedAt *string `json:"updated_at"`
+}
+
+// PiiPolicyRule One `(category, mode)` rule on the wire.
+type PiiPolicyRule struct {
+	// Category One of: `ssn`, `us_phone`, `email`, `credit_card`, `mrn`, `npi`,
+	// `icd10`, `dob`.
+	Category string `json:"category"`
+
+	// Mode `audit` (detect and log, forward untouched), `redact` (replace
+	// matched spans), or `block` (refuse the request with 422).
+	Mode string `json:"mode"`
+}
+
+// PutPiiPolicyRequest Request body for `PUT /v1/pii_policy`. REPLACE semantics: the
+// complete desired policy. Categories omitted (or set to `audit`)
+// revert to the audit default.
+type PutPiiPolicyRequest struct {
+	// Policies The desired non-default rules. Any of the eight categories not
+	// listed (or listed as `audit`) reverts to the audit default.
+	Policies []PiiPolicyRule `json:"policies"`
+}
+
 // PutTransportPolicyRequest Request body for `PUT /v1/transport_policy`.
 type PutTransportPolicyRequest struct {
 	// MinPosture The floor over the posture grades: `any` (no tenant-imposed
@@ -992,6 +1022,9 @@ type CreateDomainJSONRequestBody = CreateDomainRequest
 
 // CreateMessageJSONRequestBody defines body for CreateMessage for application/json ContentType.
 type CreateMessageJSONRequestBody = MessagesRequest
+
+// PutPiiPolicyJSONRequestBody defines body for PutPiiPolicy for application/json ContentType.
+type PutPiiPolicyJSONRequestBody = PutPiiPolicyRequest
 
 // StoreProviderCredentialJSONRequestBody defines body for StoreProviderCredential for application/json ContentType.
 type StoreProviderCredentialJSONRequestBody = StoreCredentialRequest

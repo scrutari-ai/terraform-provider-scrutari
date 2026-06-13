@@ -125,6 +125,11 @@ func (p *ScrutariProvider) Resources(_ context.Context) []func() resource.Resour
 		// tenant's transport-posture floor (monitor or enforce)
 		// from the same configuration that owns the zone.
 		NewTransportPolicyResource,
+		// Track 3: the AI-path PII redaction policy (a singleton;
+		// destroy resets every category to the audit default). Maps the
+		// eight detector categories to redact/block; audit is the
+		// absence of a rule.
+		NewPiiPolicyResource,
 	}
 }
 
