@@ -10,6 +10,7 @@ terraform-provider-scrutari.exe
 *.swp
 .DS_Store
 coverage.out
+priv.asc
 
 # Build artifacts.
 # - bin/ holds tool binaries (oapi-codegen, tfplugindocs) that
