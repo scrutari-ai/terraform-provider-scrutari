@@ -1,18 +1,28 @@
 # Acceptance test workflow — runs the live-gateway test suite against
 # the tnt_terraform_provider_ci sandbox tenant.
 #
-# Deliberately NOT triggered by pull_request:
-#   - Secrets aren't available to fork PRs (GitHub's standard guard),
-#     so a fork-PR acceptance run would fail with empty SCRUTARI_API_KEY.
-#   - Even on first-party branches, allowing PR-triggered acceptance
-#     would let any contributor with PR access burn through the CI
-#     tenant's quota. push-to-main + manual dispatch is enough.
+# Trigger: workflow_dispatch ONLY (manual, via the Actions tab "Run
+# workflow" button). This suite runs MUTATING acceptance tests (create
+# then delete real routes, zones, policies, api keys) against the live
+# gateway, so while the suite is still maturing we want every run to be
+# a deliberate operator decision, not an automatic side effect of a
+# merge. A flaky destroy on an auto-run could orphan resources on the
+# live gateway; gating on manual dispatch removes that standing risk.
+#
+# Deliberately NOT triggered by push or pull_request:
+#   - pull_request: secrets aren't available to fork PRs (GitHub's
+#     standard guard), so a fork-PR run would fail with empty
+#     SCRUTARI_API_KEY; and PR access would let any contributor burn
+#     the CI tenant's quota.
+#   - push (incl. main): removed 2026-06-13 (the workflow's own stated
+#     philosophy was "every acceptance run a deliberate operator
+#     decision"; auto-on-main contradicted it). Re-add a push trigger or
+#     enable the schedule below once the suite is reliably green.
 #
 # The companion build/lint workflow (test.yml) runs on every PR and
-# push and is the gatekeeper for the merge button. This workflow runs
-# AFTER merge as the live-integration verification, plus on demand via
-# the Actions tab "Run workflow" button when a maintainer wants to
-# pre-flight a branch against the real gateway.
+# push and is the gatekeeper for the merge button. This workflow is the
+# on-demand live-integration verification a maintainer runs against the
+# real gateway when they choose to.
 #
 # Hosted runner: ubuntu-latest, same as test.yml. The acceptance suite
 # spawns terraform plan/apply via terraform-plugin-testing, which calls
@@ -21,9 +31,6 @@
 name: Acceptance
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
   # Weekly drift smoke-test. Disabled by default because the sandbox
   # tenant is starter-plan and we want every acceptance run to be a
