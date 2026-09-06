@@ -151,6 +151,15 @@ signs:
 release:
   draft: false
   prerelease: auto
+  extra_files:
+    # Upload the version-named registry manifest as a release asset.
+    # checksum.extra_files above only puts its HASH into SHA256SUMS;
+    # without this block the file itself never reaches the GitHub
+    # Release, and Registry ingestion fails with 'missing release
+    # asset ..._manifest.json' — exactly what v0.1.0 hit (fixed there
+    # by a manual `gh release upload`).
+    - glob: "terraform-registry-manifest.json"
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
 
 # ─── Changelog ─────────────────────────────────────────────────────
 #
