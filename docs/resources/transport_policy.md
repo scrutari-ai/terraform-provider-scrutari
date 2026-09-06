@@ -25,7 +25,7 @@ The `transport_policy:write` scope this resource needs is owner/admin-tier. Like
 terraform {
   required_providers {
     scrutari = {
-      source = "scrutari/scrutari"
+      source = "scrutari-ai/scrutari"
     }
   }
 }

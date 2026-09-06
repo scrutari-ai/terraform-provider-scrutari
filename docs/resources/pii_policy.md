@@ -28,7 +28,7 @@ The `pii_policy:write` scope this resource needs is owner/admin-tier (the data-l
 terraform {
   required_providers {
     scrutari = {
-      source = "scrutari/scrutari"
+      source = "scrutari-ai/scrutari"
     }
   }
 }

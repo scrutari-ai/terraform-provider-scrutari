@@ -25,7 +25,7 @@ The `zones:write` scope this resource needs is the gateway's most powerful scope
 terraform {
   required_providers {
     scrutari = {
-      source = "scrutari/scrutari"
+      source = "scrutari-ai/scrutari"
     }
   }
 }

@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     scrutari = {
-      source = "scrutari/scrutari"
+      source = "scrutari-ai/scrutari"
     }
   }
 }

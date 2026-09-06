@@ -16,7 +16,7 @@ Routing rule that maps `(host, path_prefix)` to an upstream service. Tenant scop
 terraform {
   required_providers {
     scrutari = {
-      source = "scrutari/scrutari"
+      source = "scrutari-ai/scrutari"
     }
   }
 }

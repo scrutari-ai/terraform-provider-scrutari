@@ -23,7 +23,7 @@ Destroying this resource cascades server-side: every `scrutari_route` on the sam
 terraform {
   required_providers {
     scrutari = {
-      source = "scrutari/scrutari"
+      source = "scrutari-ai/scrutari"
     }
   }
 }
